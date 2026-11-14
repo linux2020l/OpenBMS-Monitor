@@ -40,5 +40,10 @@ class JkDriver(BmsDriver):
     def new_decoder(self, variant: str | None = None, **_options) -> Decoder:
         return Decoder(variant)
 
+    def sanitize_events(self, events: list) -> list:
+        from .privacy import sanitize
+
+        return sanitize(events)
+
 
 DRIVER = JkDriver()

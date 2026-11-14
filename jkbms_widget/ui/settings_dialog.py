@@ -51,6 +51,7 @@ class SettingsDialog(QDialog):
     dim_changed = Signal(bool)
     autostart_changed = Signal(bool)
     open_folder = Signal()
+    diagnostics_requested = Signal()
 
     def __init__(self, settings: Settings, autostart_on: bool, autostart_available: bool,
                  replay: bool = False, parent=None) -> None:
@@ -188,7 +189,15 @@ class SettingsDialog(QDialog):
         folder = QPushButton(strings.MENU_SETTINGS_FOLDER)
         folder.setProperty("secondary", True)
         folder.clicked.connect(self.open_folder)
-        lay.addWidget(folder, 0, Qt.AlignLeft)
+        diag = QPushButton(strings.MENU_DIAGNOSTICS)
+        diag.setProperty("secondary", True)
+        diag.setEnabled(not replay)
+        diag.clicked.connect(self.diagnostics_requested)
+        tools = QHBoxLayout()
+        tools.addWidget(folder)
+        tools.addWidget(diag)
+        tools.addStretch(1)
+        lay.addLayout(tools)
 
         lay.addSpacing(6)
         done = QPushButton(strings.SETTINGS_DONE)

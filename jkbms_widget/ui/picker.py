@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
 )
@@ -122,7 +123,8 @@ class BmsPickerDialog(QDialog):
 
     def _fill(self) -> None:
         self.list.clear()
-        shown = [r for r in self.results if r.looks_like_bms or self.show_all.isChecked()]
+        shown = [r for r in self.results
+                 if drivers.monitorable(r.driver_id) or self.show_all.isChecked()]
         saved = next((r for r in self.results if r.address.upper() == self.current_address), None)
         if self.current_address:
             # The saved BMS always comes first, even if it is not advertising
@@ -138,13 +140,13 @@ class BmsPickerDialog(QDialog):
             is_saved = r is saved
             label = f"{name}  {strings.PICK_SAVED_MARK}" if is_saved else name
             rssi = detail if is_saved else f"{r.rssi} dBm"
-            brand = drivers.get(r.driver_id).name if r.driver_id else "?"
+            brand = drivers.get(r.driver_id).name if r.driver_id else strings.BRAND_UNKNOWN
             item = QListWidgetItem(f"{label}\n{brand} · {r.address}   {rssi}")
             item.setData(Qt.UserRole, r)
             self.list.addItem(item)
             if is_saved:
                 self.list.setCurrentItem(item)  # the only automatic selection
-        found = sum(1 for r in self.results if r.looks_like_bms)
+        found = sum(1 for r in self.results if drivers.monitorable(r.driver_id))
         if self.results or not self.current_address:
             self.status.setText(strings.PICK_FOUND.format(n=found) if found else strings.PICK_NONE)
         self._update_buttons()
@@ -157,6 +159,13 @@ class BmsPickerDialog(QDialog):
 
     def _accept(self) -> None:
         items = self.list.selectedItems()
-        if items:
-            self.selected = items[0].data(Qt.UserRole)
-            self.accept()
+        if not items:
+            return
+        r = items[0].data(Qt.UserRole)
+        if r.driver_id and drivers.get(r.driver_id).capture_only:
+            # Known brand without a decoder yet: it could not show any data.
+            QMessageBox.information(self, strings.PICK_TITLE, strings.PICK_CAPTURE_ONLY.format(
+                brand=drivers.get(r.driver_id).name))
+            return
+        self.selected = r
+        self.accept()

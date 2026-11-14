@@ -42,12 +42,15 @@ settings).*
 
 ## Read-only by design
 
-The app can send **exactly two** request frames to the BMS: device info
-(`0x97`) and cell info (`0x96`). Every outgoing write passes through one
-function that checks the **whole frame** against an allowlist in
-[`jkbms_widget/drivers/jk/commands.py`](jkbms_widget/drivers/jk/commands.py); anything else raises
-`ForbiddenCommandError` and is never sent. There is no code that changes BMS
-settings, and there never will be: use the official JK app for that.
+The app sends only fixed **read requests**. To a JK BMS it can send exactly
+two frames: device info (`0x97`) and cell info (`0x96`)
+([`drivers/jk/commands.py`](jkbms_widget/drivers/jk/commands.py)); every
+other brand's driver lists its few read frames the same way
+([`drivers/`](jkbms_widget/drivers)). Every outgoing write passes through one
+function that checks the **whole frame** against that driver's allowlist;
+anything else raises `ForbiddenCommandError` and is never sent. There is no
+code that changes BMS settings, switches MOSFETs or sends passwords, and
+there never will be: use the manufacturer's app for that.
 
 ## Supported hardware
 
@@ -57,11 +60,17 @@ settings, and there never will be: use the official JK app for that.
 | JK-B2A8S20P | HW 19H, SW 19.34 | tested (decoding verified at idle) |
 | Other JK-B "JK02_32S" models (HW ≥ 11) | — | expected to work, untested |
 | Older JK-B (HW < 11, JK02_24S) | — | parser exists, untested |
+| JBD / Xiaoxiang, Daly / 100Balance, ANT | — | **diagnostic recording only** — help wanted |
 | JK04, JK-PB (inverter BMS), other brands | — | not supported yet |
 
-Reports from other models are very welcome. A short capture
-(`python -m jkbms_widget dump`, see below) is enough to add a model to the
-tests.
+### Help add your BMS
+
+Own a JBD, Daly, 100Balance, ANT or a JK model not listed above? The app
+can record a 60-second, read-only **diagnostic capture** (menu → *Record
+diagnostics…*) with private data removed. Attach it to a
+[“Add my BMS” issue](https://github.com/linux2020l/JkBMS-PC-Monitor/issues/new?template=bms-capture.yml);
+that is all a new decoder needs. Step-by-step guide:
+[docs/captures.md](docs/captures.md).
 
 Requirements: Windows 10/11 with Bluetooth LE (built-in or USB dongle).
 

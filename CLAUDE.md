@@ -114,6 +114,24 @@ History for the chart is in memory only (lost on restart), 10 s buckets.
     Adding a brand: new `drivers/<brand>/` + register it + fixture from a
     real capture + tests; UI texts for any new alarm codes in both
     `strings*.py` (tests enforce it).
+    Capture-only drivers (2026-11-15, `capture_only = True`, `RawDecoder`):
+    `jbd.py`, `daly.py` (also 100Balance per aiobmsble README), `ant.py`.
+    Request frames, UUIDs and matchers come from syssi/esphome-jbd-bms,
+    syssi/esphome-ant-bms and patman15/aiobmsble (Apache-2.0; facts only, no
+    code copied); `tests/test_drivers.py` checks our builders reproduce the
+    frames quoted verbatim in those sources. Only pure reads are used: no
+    JBD `DD 5A` writes / `FF AA` auth, no ANT 0x23 password / 0x51 write, no
+    Daly device-info reads (X81 one carries the serial). ANT shares JK's
+    FFE0/FFE1 UUIDs, so detection order is ANT (by name) → JBD → Daly → JK.
+    Capture-only brands can't be picked as the monitored BMS
+    (`drivers.monitorable`). Next: real decoders from community captures.
+  - `diagnostics.py` (bleak): `record()` = one read-only capture session for
+    any driver; `to_text/save()` write a shareable file (no MAC, driver
+    `sanitize_events` scrubs private fields — JK: `drivers/jk/privacy.py`).
+    UI: `ui/diagnostics_dialog.py` (menu + settings → "Record diagnostics…",
+    60 s, saved to `Documents\JK BMS Monitor\`). Community guide:
+    `docs/captures.md`, issue template `.github/ISSUE_TEMPLATE/bms-capture.yml`.
+    `dump.py` (CLI, raw unsanitized developer log) still has its own loop.
   - `capture.py` (log format; `# driver <id>` header), `replay.py` (plays a
     capture back with original timing).
   - `ble.py`: bleak only (scan with driver detection, characteristic

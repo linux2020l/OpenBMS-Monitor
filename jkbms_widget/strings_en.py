@@ -169,3 +169,30 @@ TIP_VOLTAGE = "Voltage"
 TIP_POWER = "Power"
 TIP_CHARGE = "charging"
 TIP_DISCHARGE = "discharging"
+
+# Diagnostics (community captures for new BMS brands)
+MENU_DIAGNOSTICS = "Record diagnostics…"
+DIAG_TITLE = "Diagnostic recording"
+DIAG_INTRO = (
+    "Records 60 seconds of BMS communication to a file, so the developer can "
+    "add support for your BMS. The app only reads data and changes nothing in "
+    "the BMS. The MAC address, serial number and passwords are removed from "
+    "the file (the device name stays). Close the BMS app on your phone."
+)
+DIAG_BRAND = "BMS brand:"
+DIAG_START = "Start recording"
+DIAG_STOP = "Stop"
+DIAG_CONNECTING = "Connecting…"
+DIAG_PROGRESS = "Recording… {s} s of {total}, packets received: {n}"
+DIAG_NO_DATA = ("The BMS sent no data. Check that the right brand is selected and "
+                "that the phone is disconnected.")
+DIAG_ERROR = "Recording stopped: {err}"
+DIAG_SAVED = ("Saved: {path}\nPackets: {n}. Attach the file to a GitHub issue "
+              "or send it to the developer.")
+DIAG_OPEN_FOLDER = "Open folder"
+BRAND_UNKNOWN = "Unknown brand"
+PICK_CAPTURE_ONLY = (
+    "{brand}: this brand is only supported for diagnostic recording so far. "
+    "Record diagnostics (menu → “Record diagnostics…”) and share the file so "
+    "we can add full support."
+)

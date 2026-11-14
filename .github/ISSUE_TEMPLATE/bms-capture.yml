@@ -1,0 +1,55 @@
+name: Add my BMS (diagnostic capture)
+description: Share a diagnostic recording so support for your BMS can be added or fixed.
+title: "[BMS capture] <brand> <model>"
+labels: ["bms-capture"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you! How to record: open the app → menu (right-click the widget or the tray icon)
+        → **Record diagnostics…** → pick your BMS → **Start recording** (60 s).
+        The app only **reads** data and never changes BMS settings. The file has the MAC
+        address, serial number and passwords removed. Details: [docs/captures.md](../blob/main/docs/captures.md).
+  - type: input
+    id: brand
+    attributes:
+      label: BMS brand and model
+      description: As printed on the BMS or shown in its phone app "About" screen.
+      placeholder: "e.g. JBD SP04S034, Daly 4S 100A, ANT 16S, 100Balance ..."
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Hardware / software version
+      description: From the phone app, if available.
+      placeholder: "e.g. HW 1.2, SW 4.17"
+  - type: input
+    id: battery
+    attributes:
+      label: Battery
+      placeholder: "e.g. 4S LiFePO4, 280 Ah"
+  - type: textarea
+    id: values
+    attributes:
+      label: Values shown by the phone app at about the same time
+      description: Lets us check the decoding. SOC, pack voltage, current (+ charging / − discharging), a few cell voltages, temperatures.
+      placeholder: |
+        SOC 76 %, 13.21 V, -4.2 A
+        cells 3.301 / 3.302 / 3.300 / 3.303 V
+        T1 21 °C, T2 22 °C, MOS 25 °C
+    validations:
+      required: true
+  - type: textarea
+    id: capture
+    attributes:
+      label: Capture file
+      description: Drag the bms-capture-*.txt file here (from Documents\JK BMS Monitor).
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: The phone app was disconnected while recording, and the battery was in normal use.

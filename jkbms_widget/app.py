@@ -29,6 +29,7 @@ from .ui import icons, theme
 from .ui.alarms import AlarmDialog
 from .ui.compact import CompactWindow
 from .ui.dashboard import DashboardWindow
+from .ui.diagnostics_dialog import DiagnosticsDialog
 from .ui.picker import BmsPickerDialog
 from .ui.settings_dialog import SCALES, SettingsDialog
 from .ui.taskbar_strip import STRIP_WIDTH, TaskbarStrip
@@ -375,6 +376,7 @@ class Controller(QObject):
         running = self.source is not None and self.source.running
         add(strings.MENU_DISCONNECT if running else strings.MENU_CONNECT, self.toggle_connection)
         add(strings.MENU_PICK_BMS, self.pick_bms, enabled=not self.replay)
+        add(strings.MENU_DIAGNOSTICS, self.open_diagnostics, enabled=not self.replay)
 
         scales = QMenu(strings.MENU_SCALE, m)
         sgroup = QActionGroup(scales)
@@ -411,6 +413,7 @@ class Controller(QObject):
         dlg.dim_changed.connect(self.set_dim_when_maximized)
         dlg.autostart_changed.connect(self.set_autostart)
         dlg.open_folder.connect(self.open_data_folder)
+        dlg.diagnostics_requested.connect(self.open_diagnostics)
         before = (self.settings.ui_scale, self.settings.language)
         dlg.exec()
         # Scale and language need new windows: restart once, when the user is
@@ -498,6 +501,18 @@ class Controller(QObject):
                 self.dashboard.refresh_chart(force=True)
             self.set_source(self._make_ble_source())
         elif self.source is not None and was_running:
+            self.source.start()
+        self.render()
+
+    def open_diagnostics(self) -> None:
+        """Record a shareable capture of any BMS (community support for new brands)."""
+        if self.replay:
+            return
+        was_running = self.source is not None and self.source.running
+        if was_running:
+            self.source.stop(wait_s=3.0)  # a connected BMS neither advertises nor answers
+        DiagnosticsDialog(scan_delay_ms=2000 if was_running else 0).exec()
+        if was_running:
             self.source.start()
         self.render()
 

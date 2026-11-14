@@ -169,7 +169,7 @@ def _picker(monkeypatch, current, results):
 
     monkeypatch.setattr(picker._Scanner, "start", lambda self: None)  # no real BLE scan
     dlg = picker.BmsPickerDialog(current, "LFP 3.8kWh" if current else "")
-    dlg._on_results([ScanResult(a, n, r, True) for a, n, r in results])
+    dlg._on_results([ScanResult(a, n, r, "jk") for a, n, r in results])
     return dlg
 
 
@@ -227,8 +227,8 @@ def test_picker_focus_never_selects_a_foreign_bms(app, monkeypatch):
 
     monkeypatch.setattr(picker._Scanner, "start", lambda self: None)  # no real BLE scan
     dlg = picker.BmsPickerDialog(None, "")
-    dlg._on_results([ScanResult("C8:47:80:7A:DC:B3", "LFP-4kWh", -70, True),
-                     ScanResult("C8:47:80:1A:F9:9E", "LFP 3.8kWh", -88, True)])
+    dlg._on_results([ScanResult("C8:47:80:7A:DC:B3", "LFP-4kWh", -70, "jk"),
+                     ScanResult("C8:47:80:1A:F9:9E", "LFP 3.8kWh", -88, "jk")])
     dlg.show()
     dlg.list.setFocus()  # Qt makes row 0 "current" on focus - must not count as a choice
     app.processEvents()

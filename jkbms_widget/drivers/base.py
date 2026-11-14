@@ -31,6 +31,35 @@ def uuid16(short: int) -> str:
     return f"0000{short:04x}-0000-1000-8000-00805f9b34fb"
 
 
+def crc16_modbus(data: bytes) -> int:
+    """CRC-16/MODBUS (init 0xFFFF, reflected poly 0xA001), used by Daly and ANT."""
+    crc = 0xFFFF
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return crc
+
+
+class RawDecoder:
+    """Decoder for capture-only drivers: decodes nothing, counts traffic.
+
+    Used until a brand has a real decoder (written from community captures).
+    """
+
+    def __init__(self) -> None:
+        self.notifications = 0
+        self.bytes = 0
+
+    def feed(self, chunk: bytes | bytearray) -> list[DeviceInfo | CellInfo]:
+        self.notifications += 1
+        self.bytes += len(chunk)
+        return []
+
+    def stats_text(self) -> str:
+        return f"{self.notifications} notifications, {self.bytes} bytes (not decoded yet)"
+
+
 @dataclass(frozen=True)
 class Request:
     frame: bytes
@@ -59,12 +88,20 @@ class BmsDriver:
     # itself, like JK); False: poll for as long as the connection lasts.
     poll_until_data: bool = False
     allowed_frames: frozenset[bytes] = frozenset()
+    # True: requests are known, decoding is not written yet - the driver can
+    # only record diagnostics (it cannot be the monitored BMS).
+    capture_only: bool = False
+    source: str = ""  # where the protocol facts come from (shown in captures)
 
     def matches(self, name: str, service_uuids: list[str]) -> bool:
         raise NotImplementedError
 
     def new_decoder(self, **options) -> Decoder:
-        raise NotImplementedError
+        return RawDecoder()
+
+    def sanitize_events(self, events: list) -> list:
+        """Remove private data (serials, passcodes) from captured events."""
+        return events
 
     def ensure_read_only(self, frame: bytes | bytearray) -> bytes:
         """Return `frame` as bytes if this driver allowlists it, else raise."""
