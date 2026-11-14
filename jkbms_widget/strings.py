@@ -1,12 +1,22 @@
-"""All user-visible UI text (Ukrainian) and value formatting.
+"""All user-visible UI text and value formatting.
 
-Keep every string the user sees here, so the UI can be translated later.
-Units follow the owner's mockup (Latin: V, A, W, kW).
+The constants below are the Ukrainian texts (the original language).
+`strings_en.py` defines the same names in English; `set_language("en")`
+swaps them in. Call it once at startup, BEFORE any window is created
+(views read these constants when they build themselves).
+
+Rules for adding text: every UPPER_CASE name here must also exist in
+strings_en.py with the same type, dict keys and {placeholders}
+(tests/test_strings.py checks this). Units stay Latin (V, A, W, kW).
 """
 
 from __future__ import annotations
 
+import sys
+
 from .state import CHARGING, DISCHARGING, IDLE
+
+LANGUAGES = ("uk", "en")
 
 APP_TITLE = "Jikong BMS Monitor"
 
@@ -21,7 +31,7 @@ STATUS_TEXT = {
     "replay": "Відтворення запису",
 }
 
-ALARM_NAMES_UK: dict[int, str] = {
+ALARM_TEXT: dict[int, str] = {
     0: "Високий опір балансувальних проводів",
     1: "Перегрів MOSFET",
     2: "Кількість комірок не відповідає налаштуванням",
@@ -54,11 +64,15 @@ ALARM_NAMES_UK: dict[int, str] = {
 }
 
 
+ALARM_UNKNOWN = "Невідома аварія (біт {bit})"
+
+
 def alarm_text(bit: int) -> str:
-    return ALARM_NAMES_UK.get(bit, f"Невідома аварія (біт {bit})")
+    return ALARM_TEXT.get(bit, ALARM_UNKNOWN.format(bit=bit))
 
 
 NO_VALUE = "—"
+UNIT_MIN, UNIT_HOUR, UNIT_DAY = "хв", "год", "дн"
 
 
 def fmt_voltage(v: float) -> str:
@@ -80,10 +94,10 @@ def fmt_hours(hours: float | None) -> str:
     if hours is None:
         return NO_VALUE
     if hours < 1:
-        return f"≈ {hours * 60:.0f} хв"
+        return f"≈ {hours * 60:.0f} {UNIT_MIN}"
     if hours < 48:
-        return f"≈ {hours:.1f} год"
-    return f"≈ {hours / 24:.0f} дн"
+        return f"≈ {hours:.1f} {UNIT_HOUR}"
+    return f"≈ {hours / 24:.0f} {UNIT_DAY}"
 
 
 TIME_LEFT_KIND = {"empty": "до розряду", "full": "до повного заряду", None: "струм ≈ 0"}
@@ -157,7 +171,10 @@ DIM_LABEL = "Напівпрозорі й не заважають, коли ві�
 DIM_NOTE = ("Поки активне вікно розгорнуте чи на весь екран, віджет і смужка "
             "стають прозорими, а кліки проходять крізь них")
 SCALE_LABEL = "Масштаб інтерфейсу"
-SCALE_NOTE = "Застосується після перезапуску програми"
+SCALE_NOTE = "Масштаб і мова застосуються після перезапуску програми"
+LANGUAGE_LABEL = "Мова"
+# Language names are shown in their own language; only "auto" is translated.
+LANGUAGE_OPTIONS = [("auto", "Як у Windows"), ("uk", "Українська"), ("en", "English")]
 SECTION_BATTERY = "СТАН БАТАРЕЇ"
 IDLE_LABEL = "Поріг «Очікування»"
 IDLE_NOTE = "Якщо |струм| менший за поріг, стан показується як «Очікування»"
@@ -210,9 +227,51 @@ CHART_EMPTY = "Збираю дані…"
 LEGEND_CURRENT = "Струм"
 LEGEND_CHARGE = "Заряд"
 LEGEND_DISCHARGE = "Розряд"
-LEGEND_IDLE = STATE_NAMES[IDLE]
+LEGEND_IDLE = "Очікування"
 TIP_CURRENT = "Струм"
 TIP_VOLTAGE = "Напруга"
 TIP_POWER = "Потужність"
 TIP_CHARGE = "заряд"
 TIP_DISCHARGE = "розряд"
+
+
+# ----- language switching ---------------------------------------------------------
+def _text_names() -> list[str]:
+    return [n for n in globals() if n.isupper() and not n.startswith("_") and n != "LANGUAGES"]
+
+
+_UK = {name: globals()[name] for name in _text_names()}  # originals, to switch back
+language = "uk"
+
+
+def set_language(lang: str) -> None:
+    """Swap all UPPER_CASE texts to `lang` ("uk" or "en"). Unknown -> "en"."""
+    global language
+    if lang not in LANGUAGES:
+        lang = "en"
+    values = dict(_UK)
+    if lang == "en":
+        from . import strings_en
+
+        values.update({n: getattr(strings_en, n) for n in _UK if hasattr(strings_en, n)})
+    globals().update(values)
+    language = lang
+
+
+def resolve_language(setting: str, system_lang: str | None) -> str:
+    """Setting "auto" follows Windows: Ukrainian Windows -> "uk", else "en"."""
+    if setting in LANGUAGES:
+        return setting
+    return "uk" if system_lang == "uk" else "en"
+
+
+def system_language() -> str | None:
+    """Two-letter code of the Windows display language, e.g. "uk"/"en"."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    import locale
+
+    langid = ctypes.windll.kernel32.GetUserDefaultUILanguage()
+    name = locale.windows_locale.get(langid, "")  # e.g. "uk_UA"
+    return name.split("_")[0] or None

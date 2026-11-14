@@ -39,6 +39,7 @@ class Settings:
     taskbar_offset: int | None = None  # strip: logical px from taskbar right edge
     fullscreen_behavior: str = "hide"  # strip during full-screen apps: "hide" / "corner"
     dim_when_maximized: bool = True  # widget/strip see-through + click-through then
+    language: str = "auto"  # "auto" (Windows display language), "uk" or "en"
     extra: dict = field(default_factory=dict)  # forward compatibility
 
     @classmethod
@@ -69,6 +70,8 @@ class Settings:
             self.variant = None
         if self.display_mode not in ("widget", "taskbar"):
             self.display_mode = "taskbar"
+        if self.language not in ("auto", "uk", "en"):
+            self.language = "auto"
         if self.fullscreen_behavior not in ("hide", "corner"):
             self.fullscreen_behavior = "hide"
         if not isinstance(self.taskbar_offset, int):

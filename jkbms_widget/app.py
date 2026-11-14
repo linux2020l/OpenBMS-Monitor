@@ -16,7 +16,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QLockFile, QObject, QPoint, QRect, QTimer, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QFont, QGuiApplication
-from PySide6.QtWidgets import QApplication, QDialog, QMenu, QMessageBox, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
 from . import autostart, strings, win_taskbar
 from .parser import CellInfo, DeviceInfo, Variant
@@ -107,7 +107,7 @@ class Controller(QObject):
         self.timer.start(1000)
         # While another app's window is maximized / full-screen, the widget and
         # the strip turn see-through and let clicks pass (owner's request).
-        self._dimmed = False
+        self._dimmed: dict[QWidget, bool] = {}  # window -> dimmed now
         self.dim_timer = QTimer(self)
         self.dim_timer.timeout.connect(self.update_dimming)
         self.dim_timer.start(400)
@@ -380,6 +380,7 @@ class Controller(QObject):
         dlg.pick_requested.connect(pick)
         dlg.mode_changed.connect(mode)
         dlg.scale_changed.connect(lambda s: self.set_scale(s, notify=False))
+        dlg.language_changed.connect(self.set_language)
         dlg.threshold_changed.connect(self.set_idle_threshold)
         dlg.fullscreen_changed.connect(self.set_fullscreen_behavior)
         dlg.dim_changed.connect(self.set_dim_when_maximized)
@@ -399,10 +400,14 @@ class Controller(QObject):
     def update_dimming(self) -> None:
         own = {native_hwnd(w) for w in QApplication.topLevelWidgets() if w.isVisible()}
         dim = self.settings.dim_when_maximized and win_taskbar.foreground_is_maximized(own)
-        if dim != self._dimmed:
-            self._dimmed = dim
-            for window in (self.compact, self.strip):
-                set_dimmed(window, dim)
+        # A maximized window ends above the taskbar, so the strip on the
+        # taskbar never covers it: only dim the strip in its corner position
+        # (owner's report 2026-11-14: the strip greyed out for no reason).
+        wanted = {self.compact: dim, self.strip: dim and self.strip.in_corner}
+        if wanted != self._dimmed:
+            self._dimmed = wanted
+            for window, state in wanted.items():
+                set_dimmed(window, state)
 
     def set_dim_when_maximized(self, enabled: bool) -> None:
         self.settings.dim_when_maximized = enabled
@@ -469,6 +474,11 @@ class Controller(QObject):
         self.save_settings()
         if notify:
             self._notify(strings.SCALE_RESTART.format(pct=round(scale * 100)))
+
+    def set_language(self, lang: str) -> None:
+        """Saved now, applied at the next start (windows are built once)."""
+        self.settings.language = lang
+        self.save_settings()
 
     def toggle_autostart(self) -> None:
         self.set_autostart(not autostart.is_enabled())
@@ -599,11 +609,15 @@ def run_widget(
     # Scale must be set before QApplication exists.
     if abs(settings.ui_scale - 1.0) > 0.01 and "QT_SCALE_FACTOR" not in os.environ:
         os.environ["QT_SCALE_FACTOR"] = f"{settings.ui_scale:g}"
+    # Language must be set before any window is built (views read strings once).
+    system_lang = strings.system_language()
+    strings.set_language(strings.resolve_language(settings.language, system_lang))
 
     app = QApplication.instance() or QApplication(sys.argv)
     setup_logging(data / "widget.log")
-    log.info("start (address=%s replay=%s frozen=%s autostart=%s)", settings.address,
-             bool(replay), getattr(sys, "frozen", False), autostart_launch)
+    log.info("start (address=%s replay=%s frozen=%s autostart=%s lang=%s/%s)", settings.address,
+             bool(replay), getattr(sys, "frozen", False), autostart_launch,
+             strings.language, system_lang)
 
     # One instance only: two copies would fight over the single BLE connection.
     lock = QLockFile(str(data / "widget.lock"))

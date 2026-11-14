@@ -240,13 +240,17 @@ def test_picker_focus_never_selects_a_foreign_bms(app, monkeypatch):
     assert dlg.selected.address == "C8:47:80:1A:F9:9E"
 
 
-def test_maximized_window_dims_widget_and_strip(app, monkeypatch):
+def test_maximized_window_dims_widget_and_corner_strip_only(app, monkeypatch):
     from jkbms_widget import win_taskbar
 
     ctl, _ = make_controller()
     monkeypatch.setattr(win_taskbar, "foreground_is_maximized", lambda own: True)
     ctl.update_dimming()
-    assert ctl.compact.windowOpacity() < 0.5 and ctl.strip.windowOpacity() < 0.5
+    # The strip on the taskbar never overlaps a maximized window: stays opaque.
+    assert ctl.compact.windowOpacity() < 0.5 and ctl.strip.windowOpacity() == 1.0
+    ctl.strip.in_corner = True  # moved over the screen during a full-screen app
+    ctl.update_dimming()
+    assert ctl.strip.windowOpacity() < 0.5
     monkeypatch.setattr(win_taskbar, "foreground_is_maximized", lambda own: False)
     ctl.update_dimming()
     assert ctl.compact.windowOpacity() == 1.0 and ctl.strip.windowOpacity() == 1.0

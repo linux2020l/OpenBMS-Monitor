@@ -14,8 +14,9 @@ the battery and you want to see what it is doing at a glance.
 |---|---|
 | ![Taskbar strip: discharging, charging, fault](docs/screenshots/taskbar.png) | ![Floating widget](docs/screenshots/widget.png) |
 
-*Screenshots use demo data. The user interface is in Ukrainian; all texts
-live in one module (`jkbms_widget/strings.py`) and can be translated.*
+*Screenshots use demo data. The interface is available in **English** and
+**Ukrainian** (follows the Windows display language, can be changed in
+settings).*
 
 ## Features
 
@@ -66,14 +67,22 @@ Requirements: Windows 10/11 with Bluetooth LE (built-in or USB dongle).
 
 ## Getting started
 
-### Run the app
+### Install
 
-1. Close the JK phone app (or disconnect it). The BMS accepts only one
+1. Download `JkBmsWidget-Setup-x.y.z.exe` from
+   [Releases](https://github.com/linux2020l/JkBMS-PC-Monitor/releases) and run
+   it. No administrator rights are needed; the app is installed for the
+   current user (`%LOCALAPPDATA%\Programs\JkBmsWidget`) and can be removed in
+   *Settings → Apps*. Your settings and history are kept on uninstall.
+2. The installer is not code-signed, so Windows SmartScreen may show
+   "Windows protected your PC": click *More info → Run anyway*.
+3. Close the JK phone app (or disconnect it). The BMS accepts only one
    Bluetooth connection at a time.
-2. Start `JkBmsWidget.exe` (see [Build](#build-the-exe)) or, from source,
-   `pythonw -m jkbms_widget`.
-3. On the first start a dialog lists JK devices nearby: pick yours. The app
+4. On the first start a dialog lists JK devices nearby: pick yours. The app
    connects to it from now on.
+
+Requires Windows 10 (1709 or newer) or Windows 11, 64-bit, with Bluetooth LE.
+From source: `pythonw -m jkbms_widget` (see [Development](#development)).
 
 Do **not** pair the BMS in Windows Bluetooth settings; the app connects
 without pairing.
@@ -84,8 +93,8 @@ without pairing.
   settings; right click (or the tray icon) opens the menu: connect /
   disconnect, choose BMS, display mode, settings, exit.
 - Settings: BMS, display mode (taskbar / floating widget), behaviour during
-  full-screen apps, scale, fading over maximized windows, idle threshold,
-  start with Windows (exe only).
+  full-screen apps, scale, language, fading over maximized windows, idle
+  threshold, start with Windows (installed app only).
 - Settings, chart history and a log are stored in `%APPDATA%\JkBmsWidget\`
   (`settings.json`, `history.sqlite`, `widget.log`). Delete the folder to
   reset everything.
@@ -127,15 +136,28 @@ python tools\make_fixture.py logs\dump-XXXX.txt tests\fixtures\NAME.txt --note "
 
 A test checks that every fixture has these fields blanked.
 
-### Build the exe
+### Build the app and the installer
 
 ```powershell
+winget install JRSoftware.InnoSetup   # once, for the installer
 powershell -ExecutionPolicy Bypass -File build.ps1
 ```
 
-Runs the tests, generates the icon and builds `dist\JkBmsWidget.exe` with
-PyInstaller (single file, ~50 MB, no console). The first start takes a few
-seconds while it unpacks.
+Runs the tests, builds `dist\JkBmsWidget\JkBmsWidget.exe` with PyInstaller
+(one folder, no console) and packs it into
+`dist\JkBmsWidget-Setup-<version>.exe` with
+[Inno Setup](https://jrsoftware.org/isinfo.php)
+([installer/JkBmsWidget.iss](installer/JkBmsWidget.iss)). The version comes
+from `jkbms_widget/__init__.py`.
+
+### Translations
+
+All visible text is in [`jkbms_widget/strings.py`](jkbms_widget/strings.py)
+(Ukrainian, the original) and
+[`jkbms_widget/strings_en.py`](jkbms_widget/strings_en.py) (English).
+`tests/test_strings.py` checks that both define the same texts with the same
+placeholders. Adding a language: copy `strings_en.py`, translate it, and
+register it in `strings.LANGUAGES` and `LANGUAGE_OPTIONS`.
 
 ### Project layout
 
@@ -150,7 +172,8 @@ jkbms_widget/
   state.py           state with hysteresis, time left, history buffer
   history_store.py   7-day per-BMS history (SQLite)
   settings.py        settings.json
-  strings.py         all user-visible text (Ukrainian) and formatting
+  strings.py         all user-visible text (Ukrainian) + language switching
+  strings_en.py      English texts
   sources.py         BLE / replay data sources (background thread -> Qt signals)
   win_taskbar.py     taskbar geometry, full-screen detection (Win32 via ctypes)
   autostart.py       start with Windows (HKCU Run key, exe only)
@@ -159,7 +182,8 @@ jkbms_widget/
                      settings, alarm list, BMS picker, theme, icons
 tests/               pytest; fixtures/ holds sanitized real captures
 tools/               make_fixture.py (sanitize dumps), make_icon.py
-build.ps1            test + build the exe
+installer/           Inno Setup script for the Windows installer
+build.ps1            test + build the app + build the installer
 CLAUDE.md            design notes, protocol notes and conventions
 ```
 

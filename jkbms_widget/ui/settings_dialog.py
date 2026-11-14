@@ -45,6 +45,7 @@ class SettingsDialog(QDialog):
     pick_requested = Signal()
     mode_changed = Signal(str)  # "widget" / "taskbar"
     scale_changed = Signal(float)
+    language_changed = Signal(str)  # "auto" / "uk" / "en"
     threshold_changed = Signal(float)
     fullscreen_changed = Signal(str)  # "hide" / "corner"
     dim_changed = Signal(bool)
@@ -118,7 +119,7 @@ class SettingsDialog(QDialog):
 
         grid = QGridLayout()
         grid.setColumnStretch(0, 1)
-        # Row 0: full-screen behaviour of the taskbar strip; row 1: scale.
+        # Row 0: full-screen behaviour of the strip; row 1: scale; row 2: language.
         grid.addWidget(QLabel(strings.FULLSCREEN_LABEL), 0, 0)
         self.fullscreen = QComboBox()
         for key, text in strings.FULLSCREEN_OPTIONS:
@@ -136,6 +137,14 @@ class SettingsDialog(QDialog):
         self.scale.currentIndexChanged.connect(
             lambda i: self.scale_changed.emit(self.scale.itemData(i)))
         grid.addWidget(self.scale, 1, 1, Qt.AlignRight)
+        grid.addWidget(QLabel(strings.LANGUAGE_LABEL), 2, 0)
+        self.language = QComboBox()
+        for key, text in strings.LANGUAGE_OPTIONS:
+            self.language.addItem(text, key)
+        self.language.setCurrentIndex(max(0, self.language.findData(settings.language)))
+        self.language.currentIndexChanged.connect(
+            lambda i: self.language_changed.emit(self.language.itemData(i)))
+        grid.addWidget(self.language, 2, 1, Qt.AlignRight)
         lay.addLayout(grid)
         lay.addWidget(_note(strings.SCALE_NOTE))
         self.dim = QCheckBox(strings.DIM_LABEL)

@@ -61,8 +61,16 @@ Hardware (from the official JK app "About" screen, app V6.4.05):
 
 The owner's original mockup image stays local only (not published, it is
 an example of another app). Current look: [docs/screenshots/](docs/screenshots/)
-(rendered from demo data, offscreen). UI text is **Ukrainian**;
-keep all user-visible strings in one module so they can be translated later.
+(rendered from demo data, offscreen; README uses the English UI).
+UI text: **Ukrainian (original) + English** (owner's request 2026-11-15).
+Every visible string lives in `strings.py` (uk) and `strings_en.py` (en),
+same UPPER_CASE names; `tests/test_strings.py` enforces matching names,
+types, dict keys and {placeholders}. `strings.set_language()` swaps the
+module globals at startup, BEFORE any window exists (views read strings
+when built), so a language change applies after restart. Setting
+`language`: "auto" (Windows display language: uk → uk, else en) / uk / en.
+Never hard-code UI text elsewhere; tests that switch language must switch
+back to "uk".
 Elements:
 - Title bar: app name, BLE connection status (dot + text), minimize, close.
 - SOC ring with big percentage; "≈ N h до розряду" (time to empty/full,
@@ -97,7 +105,8 @@ History for the chart is in memory only (lost on restart), 10 s buckets.
     function `send_request`). `dump.py`: live logger + decoded console output.
   - `state.py` (pure): `StateTracker` (moving average + hysteresis),
     `time_left`, `History`, `Snapshot` (everything a view needs).
-  - `strings.py` (pure): every user-visible Ukrainian string + formatters.
+  - `strings.py` (pure): every user-visible string (uk) + formatters +
+    language switching; `strings_en.py`: English texts.
   - `sources.py`: `BleSource` (bleak thread, auto-reconnect every 5 s,
     10 s no-data watchdog) and `ReplaySource` (endless loop of a capture);
     both talk to the GUI only through Qt signals.
@@ -112,9 +121,19 @@ History for the chart is in memory only (lost on restart), 10 s buckets.
     lock, QT_SCALE_FACTOR before QApplication).
   - `ui/`: PySide6 only — theme, vector icons, SOC ring, chart, compact
     widget, taskbar strip, dashboard, alarm dialog, BMS picker.
-  - `jkbms_widget_app.py` + `build.ps1`: PyInstaller one-file windowed exe;
-    no CLI args = widget. Hidden `--exit-after N` for unattended exe tests
+  - `jkbms_widget_app.py` + `build.ps1`: PyInstaller **one-folder**
+    windowed build `dist\JkBmsWidget\JkBmsWidget.exe` (faster start, fewer
+    antivirus false positives than one-file), then Inno Setup 6
+    (`installer/JkBmsWidget.iss`, ISCC in `%LOCALAPPDATA%\Programs\Inno
+    Setup 6`) → `dist\JkBmsWidget-Setup-<version>.exe`. Per-user install
+    (no admin) to `%LOCALAPPDATA%\Programs\JkBmsWidget`, en/uk wizard,
+    optional autostart (same HKCU Run value as `autostart.py`), uninstall
+    kills the app and removes the Run value, keeps `%APPDATA%` data.
+    Version = `jkbms_widget.__version__`. Windows 10 1709+ x64 only.
+    No CLI args = widget. Hidden `--exit-after N` for unattended exe tests
     (run with `QT_QPA_PLATFORM=offscreen`, then read `widget.log`).
+    Never run the installer silently from Claude's shell: it changes the
+    owner's real system (install dir, Run key) - let the owner run it.
 
 UI rules learned the hard way (owner feedback 2026-11-14):
 - Qt style is **Fusion + own dark palette** (`theme.apply_style`). The native
