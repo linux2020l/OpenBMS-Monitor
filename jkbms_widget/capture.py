@@ -4,6 +4,7 @@ Format, one event per line ('#' lines are comments):
     <seconds since start> <TX|RX> h=0x<handle> len=<n> <hex bytes>
 Example:
        2.712 RX h=0x0011 len= 23 22 00 00 ...
+A header line '# driver <id>' names the BMS driver that decodes the capture.
 """
 
 from __future__ import annotations
@@ -45,3 +46,18 @@ def parse_line(line: str) -> CaptureEvent | None:
 def read_capture(path: str | Path) -> list[CaptureEvent]:
     with open(path, encoding="utf-8") as f:
         return [e for e in map(parse_line, f) if e is not None]
+
+
+def capture_driver_id(path: str | Path) -> str | None:
+    """Driver id from a '# driver <id>' header line (dump writes it), else None.
+
+    Older captures have no such line; they are all JK (drivers.get(None)).
+    """
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if not line.startswith("#"):
+                break
+            words = line[1:].split()
+            if len(words) == 2 and words[0] == "driver":
+                return words[1]
+    return None

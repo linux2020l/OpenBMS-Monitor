@@ -11,7 +11,7 @@ import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-from .parser import DEFAULT_IDLE_THRESHOLD
+from .model import DEFAULT_IDLE_THRESHOLD
 
 APP_DIR_NAME = "JkBmsWidget"
 
@@ -28,7 +28,8 @@ def app_dir() -> Path:
 class Settings:
     address: str | None = None  # BMS MAC address
     bms_name: str = ""  # last known BLE name, for display
-    variant: str | None = None  # force "JK02_24S"/"JK02_32S"; None = auto
+    driver: str = "jk"  # BMS family (drivers.DRIVERS ids); old files = JK
+    variant: str | None = None  # JK only: force "JK02_24S"/"JK02_32S"; None = auto
     idle_threshold: float = DEFAULT_IDLE_THRESHOLD
     ui_scale: float = 1.0  # applied at startup (QT_SCALE_FACTOR)
     compact_pos: list[int] | None = None  # [x, y]
@@ -68,6 +69,10 @@ class Settings:
             self.ui_scale = 1.0
         if self.variant not in (None, "JK02_24S", "JK02_32S"):
             self.variant = None
+        from . import drivers  # local import: keeps settings importable on its own
+
+        if self.driver not in {d.id for d in drivers.DRIVERS}:
+            self.driver = drivers.DEFAULT_DRIVER.id
         if self.display_mode not in ("widget", "taskbar"):
             self.display_mode = "taskbar"
         if self.language not in ("auto", "uk", "en"):

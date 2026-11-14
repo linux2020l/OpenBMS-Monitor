@@ -4,16 +4,10 @@ from pathlib import Path
 import pytest
 
 from jkbms_widget.capture import read_capture
-from jkbms_widget.commands import checksum
-from jkbms_widget.frames import FrameAssembler
-from jkbms_widget.parser import (
-    CellInfo,
-    Decoder,
-    DeviceInfo,
-    Variant,
-    battery_state,
-    guess_variant,
-)
+from jkbms_widget.drivers.jk.commands import checksum
+from jkbms_widget.drivers.jk.frames import FrameAssembler
+from jkbms_widget.drivers.jk.parser import Decoder, Variant, guess_variant
+from jkbms_widget.model import CellInfo, DeviceInfo, battery_state
 
 FIXTURE = Path(__file__).parent / "fixtures" / "jk02_32s_b1a8s20p_windows.txt"
 
@@ -49,10 +43,9 @@ def test_first_cell_info_matches_values_seen_in_jk_app(decoded):
     assert cell.nominal_capacity == pytest.approx(297.439)
     assert cell.cycle_count == 75
     assert cell.soh == 98
-    assert cell.temperature_1 == pytest.approx(11.8)
-    assert cell.temperature_2 == pytest.approx(12.6)
+    assert cell.temperatures == pytest.approx((11.8, 12.6))
     assert cell.mosfet_temperature == pytest.approx(14.8)
-    assert cell.alarm_bits == 0 and cell.alarms == ()
+    assert cell.raw_alarms == 0 and cell.alarms == ()
     assert cell.charging_enabled and cell.discharging_enabled
     assert not cell.balancing
 
@@ -106,7 +99,7 @@ def test_newer_b2a8s20p_hw19_decodes_with_the_32s_layout():
     assert c.pack_voltage == pytest.approx(13.62, abs=0.01)
     assert c.nominal_capacity == pytest.approx(314.0)
     assert c.soc == 100 and c.soh == 100 and c.cycle_count == 0
-    assert c.temperature_1 == pytest.approx(22.7, abs=1.0)
+    assert c.temperatures[0] == pytest.approx(22.7, abs=1.0)
     assert c.mosfet_temperature == pytest.approx(25.1, abs=1.0)
     assert c.alarms == ()
 
@@ -129,14 +122,23 @@ def test_forced_variant_decodes_without_device_info():
     assert len(out) == 1 and isinstance(out[0], CellInfo)
 
 
-def test_alarm_bits_are_decoded_to_names():
-    # Take a real cell frame, set alarm bits 4 and 11 (32S: u32 at 134+32), fix CRC.
+def test_alarm_bits_are_decoded_to_common_codes():
+    # Take a real cell frame, set alarm bits 4, 11 and an unknown 30 (32S: u32
+    # at 134+32), fix CRC.
     frame = bytearray(first_cell_frame())
-    struct.pack_into("<I", frame, 134 + 32, (1 << 4) | (1 << 11))
+    struct.pack_into("<I", frame, 134 + 32, (1 << 4) | (1 << 11) | (1 << 30))
     frame[-1] = checksum(frame[:-1])
     (cell,) = Decoder(variant=Variant.JK02_32S).feed(bytes(frame))
-    assert cell.alarms == (4, 11)
-    assert cell.alarm_names() == ["Battery is fully charged", "Cell undervoltage"]
+    assert cell.alarms == ("fully_charged", "cell_undervoltage", "jk_bit_30")
+    assert cell.raw_alarms == (1 << 4) | (1 << 11) | (1 << 30)
+
+
+def test_every_jk_alarm_maps_to_a_known_code():
+    from jkbms_widget.drivers.jk.parser import ALARM_BITS
+    from jkbms_widget.model import ALARM_CODES
+
+    assert set(ALARM_BITS.values()) <= set(ALARM_CODES)
+    assert len(set(ALARM_BITS.values())) == len(ALARM_BITS)  # no two bits share a code
 
 
 @pytest.mark.parametrize(

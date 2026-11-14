@@ -9,7 +9,7 @@ import json
 from collections import deque
 from dataclasses import dataclass
 
-from .parser import DEFAULT_IDLE_THRESHOLD, CellInfo
+from .model import DEFAULT_IDLE_THRESHOLD, INFORMATIONAL_ALARMS, CellInfo
 
 IDLE, CHARGING, DISCHARGING = "Idle", "Charging", "Discharging"
 
@@ -86,22 +86,24 @@ class Snapshot:
     device_name: str = ""  # BLE name from the device-info frame
 
     @property
-    def fault_alarms(self) -> tuple[int, ...]:
-        from .parser import INFORMATIONAL_ALARM_BITS
-
+    def fault_alarms(self) -> tuple[str, ...]:
+        """Active alarm codes that are real faults (not e.g. 'fully_charged')."""
         if self.cell is None:
             return ()
-        return tuple(b for b in self.cell.alarms if b not in INFORMATIONAL_ALARM_BITS)
+        return tuple(a for a in self.cell.alarms if a not in INFORMATIONAL_ALARMS)
 
 
 MIN_ESTIMATE_CURRENT = 0.1  # A; below this "time left" is not shown
 
 
 def time_left(cell: CellInfo, avg_current: float) -> tuple[float | None, str | None]:
-    """(hours, kind) where kind is 'empty' or 'full'; (None, None) if ~0 A."""
+    """(hours, kind) where kind is 'empty' or 'full'; (None, None) if ~0 A
+    or the BMS does not report its capacity."""
+    if cell.remaining_capacity is None:
+        return None, None
     if avg_current <= -MIN_ESTIMATE_CURRENT:
         return cell.remaining_capacity / -avg_current, "empty"
-    if avg_current >= MIN_ESTIMATE_CURRENT:
+    if avg_current >= MIN_ESTIMATE_CURRENT and cell.nominal_capacity is not None:
         missing = max(0.0, cell.nominal_capacity - cell.remaining_capacity)
         return missing / avg_current, "full"
     return None, None

@@ -1,6 +1,6 @@
 import pytest
 
-from jkbms_widget.commands import (
+from jkbms_widget.drivers.jk.commands import (
     ALLOWED_FRAMES,
     REQUEST_CELL_INFO,
     REQUEST_DEVICE_INFO,

@@ -1,4 +1,4 @@
-"""Dialog to find and choose the BMS (first run, or menu "Вибрати BMS…")."""
+"""Dialog to find and choose the BMS (first run, or menu "Choose BMS…")."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from .. import strings, win_taskbar
+from .. import drivers, strings, win_taskbar
 from ..ble import ScanResult, scan
 from .widgets import native_hwnd
 
@@ -40,14 +40,15 @@ class _Scanner(QObject):
 
 
 class BmsPickerDialog(QDialog):
-    """Lists JK BMS devices. Safety: nothing is preselected except the saved
-    BMS, because several JK BMS may be in range (neighbours) and the strongest
-    signal is not necessarily ours."""
+    """Lists BMS devices of all supported brands. Safety: nothing is preselected
+    except the saved BMS, because several BMS may be in range (neighbours) and
+    the strongest signal is not necessarily ours."""
 
     def __init__(
         self,
         current_address: str | None = None,
         current_name: str = "",
+        current_driver: str | None = None,
         scan_delay_ms: int = 0,
         parent=None,
     ) -> None:
@@ -59,6 +60,7 @@ class BmsPickerDialog(QDialog):
         self.selected: ScanResult | None = None
         self.current_address = (current_address or "").upper()
         self.current_name = current_name
+        self.current_driver = current_driver
         self.results: list[ScanResult] = []
 
         lay = QVBoxLayout(self)
@@ -120,13 +122,13 @@ class BmsPickerDialog(QDialog):
 
     def _fill(self) -> None:
         self.list.clear()
-        shown = [r for r in self.results if r.looks_like_jk or self.show_all.isChecked()]
+        shown = [r for r in self.results if r.looks_like_bms or self.show_all.isChecked()]
         saved = next((r for r in self.results if r.address.upper() == self.current_address), None)
         if self.current_address:
             # The saved BMS always comes first, even if it is not advertising
             # right now (e.g. still connected to the phone).
             if saved is None:
-                saved = ScanResult(self.current_address, self.current_name, 0, True)
+                saved = ScanResult(self.current_address, self.current_name, 0, self.current_driver)
                 detail = strings.PICK_NOT_SEEN
             else:
                 detail = f"{saved.rssi} dBm"
@@ -136,14 +138,15 @@ class BmsPickerDialog(QDialog):
             is_saved = r is saved
             label = f"{name}  {strings.PICK_SAVED_MARK}" if is_saved else name
             rssi = detail if is_saved else f"{r.rssi} dBm"
-            item = QListWidgetItem(f"{label}\n{r.address}   {rssi}")
+            brand = drivers.get(r.driver_id).name if r.driver_id else "?"
+            item = QListWidgetItem(f"{label}\n{brand} · {r.address}   {rssi}")
             item.setData(Qt.UserRole, r)
             self.list.addItem(item)
             if is_saved:
                 self.list.setCurrentItem(item)  # the only automatic selection
-        jk = sum(1 for r in self.results if r.looks_like_jk)
+        found = sum(1 for r in self.results if r.looks_like_bms)
         if self.results or not self.current_address:
-            self.status.setText(strings.PICK_FOUND.format(n=jk) if jk else strings.PICK_NONE)
+            self.status.setText(strings.PICK_FOUND.format(n=found) if found else strings.PICK_NONE)
         self._update_buttons()
 
     # Use the *selection*, not the "current" item: when the list gets focus Qt

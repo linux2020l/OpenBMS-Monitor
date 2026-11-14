@@ -21,38 +21,38 @@ STATUS_TEXT = {
     "replay": "Playing a recording",
 }
 
-ALARM_TEXT: dict[int, str] = {
-    0: "Balance wire resistance too high",
-    1: "MOSFET overtemperature",
-    2: "Cell count does not match settings",
-    3: "Current sensor fault",
-    4: "Battery fully charged",
-    5: "Battery overvoltage",
-    6: "Charge overcurrent",
-    7: "Short circuit while charging",
-    8: "Overtemperature while charging",
-    9: "Too cold to charge",
-    10: "Coprocessor communication error",
-    11: "Cell undervoltage",
-    12: "Battery undervoltage",
-    13: "Discharge overcurrent",
-    14: "Short circuit while discharging",
-    15: "Overtemperature while discharging",
-    16: "Charge MOSFET fault",
-    17: "Discharge MOSFET fault",
-    18: "GPS module disconnected",
-    19: "Password change required",
-    20: "Failed to switch discharge on",
-    21: "Battery overtemperature",
-    22: "Temperature sensor fault",
-    23: "PL module fault (parallel connection)",
-    24: "Failed to release short-circuit protection",
-    25: "Discharge overcurrent (level II)",
-    26: "Discharge overcurrent (level III)",
-    27: "Too cold to discharge",
-    28: "Remote lock via GPS",
+ALARM_TEXT: dict[str, str] = {
+    "balance_wire_resistance": "Balance wire resistance too high",
+    "mosfet_overtemperature": "MOSFET overtemperature",
+    "cell_count_mismatch": "Cell count does not match settings",
+    "current_sensor_fault": "Current sensor fault",
+    "fully_charged": "Battery fully charged",
+    "pack_overvoltage": "Battery overvoltage",
+    "charge_overcurrent": "Charge overcurrent",
+    "charge_short_circuit": "Short circuit while charging",
+    "charge_overtemperature": "Overtemperature while charging",
+    "charge_undertemperature": "Too cold to charge",
+    "coprocessor_error": "Coprocessor communication error",
+    "cell_undervoltage": "Cell undervoltage",
+    "pack_undervoltage": "Battery undervoltage",
+    "discharge_overcurrent": "Discharge overcurrent",
+    "discharge_short_circuit": "Short circuit while discharging",
+    "discharge_overtemperature": "Overtemperature while discharging",
+    "charge_mosfet_fault": "Charge MOSFET fault",
+    "discharge_mosfet_fault": "Discharge MOSFET fault",
+    "gps_disconnected": "GPS module disconnected",
+    "password_change_required": "Password change required",
+    "discharge_on_failed": "Failed to switch discharge on",
+    "battery_overtemperature": "Battery overtemperature",
+    "temperature_sensor_fault": "Temperature sensor fault",
+    "parallel_module_fault": "PL module fault (parallel connection)",
+    "short_circuit_release_failed": "Failed to release short-circuit protection",
+    "discharge_overcurrent_2": "Discharge overcurrent (level II)",
+    "discharge_overcurrent_3": "Discharge overcurrent (level III)",
+    "discharge_undertemperature": "Too cold to discharge",
+    "gps_remote_lock": "Remote lock via GPS",
 }
-ALARM_UNKNOWN = "Unknown alarm (bit {bit})"
+ALARM_UNKNOWN = "Unknown alarm ({code})"
 
 UNIT_MIN, UNIT_HOUR, UNIT_DAY = "min", "h", "d"
 
@@ -87,7 +87,6 @@ MENU_SCALE = "Scale"
 MENU_AUTOSTART = "Start with Windows"
 TIP_AUTOSTART_DEV = "Only available in the built app (.exe)"
 MENU_SETTINGS_FOLDER = "Open settings folder"
-SCALE_RESTART = "Scale {pct}% will apply after restarting the app."
 TASKBAR_UNSUPPORTED = (
     "Taskbar mode works only with a horizontal taskbar that is not "
     "auto-hidden. Switching back to the floating widget."
@@ -108,7 +107,7 @@ DIM_LABEL = "See-through and click-through when a window is maximized"
 DIM_NOTE = ("While the active window is maximized or full-screen, the widget "
             "becomes transparent and clicks pass through it")
 SCALE_LABEL = "Interface scale"
-SCALE_NOTE = "Scale and language apply after restarting the app"
+SCALE_NOTE = "Scale and language apply when you close the settings (the app restarts in a second)"
 LANGUAGE_LABEL = "Language"
 LANGUAGE_OPTIONS = [("auto", "Same as Windows"), ("uk", "Українська"), ("en", "English")]
 SECTION_BATTERY = "BATTERY STATE"
@@ -121,12 +120,12 @@ REPLAY_NOTE = "Playing a recording: the BMS cannot be changed"
 # BMS picker
 PICK_TITLE = "Choose BMS"
 PICK_HINT = (
-    "Close the JK app on your phone: a BMS that is connected to the phone "
+    "Close the BMS app on your phone: a BMS that is connected to the phone "
     "does not show up in the search."
 )
 PICK_SCANNING = "Searching for Bluetooth devices…"
 PICK_FOUND = "Found: {n}"
-PICK_NONE = "No JK BMS found. Check that Bluetooth is on and search again."
+PICK_NONE = "No BMS found. Check that Bluetooth is on and search again."
 PICK_SAVED_MARK = "(saved)"
 PICK_NOT_SEEN = "not visible right now"
 PICK_SHOW_ALL = "Show all devices"
@@ -140,7 +139,8 @@ TILE_CURRENT = "Current"
 TILE_POWER = "Power"
 TILE_VOLTAGE = "Voltage"
 TILE_TEMPERATURE = "Temperature"
-TEMP_TOOLTIP = "Sensor 1: {t1:.1f} °C\nSensor 2: {t2:.1f} °C\nMOSFET: {mos:.1f} °C"
+TEMP_SENSOR = "Sensor {n}: {t:.1f} °C"
+TEMP_MOSFET = "MOSFET: {t:.1f} °C"
 HEALTH_OK = "Battery OK"
 HEALTH_OK_SUB = "All values within limits"
 HEALTH_ALARM = "Warning: active alarms ({n})"

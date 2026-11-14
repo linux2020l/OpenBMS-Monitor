@@ -8,20 +8,23 @@ import asyncio
 import sys
 from pathlib import Path
 
-from . import __version__
-from .commands import REQUEST_CELL_INFO, REQUEST_DEVICE_INFO
+from . import __version__, drivers
+from .drivers.jk import VARIANTS
 
 # WinRT HRESULT 0x800710DF "The device is not ready for use":
 # raised by bleak when the Bluetooth radio is switched off.
 ERROR_NOT_READY = -2147020577
 
-VARIANTS = ["JK02_24S", "JK02_32S"]
+DRIVER_IDS = [d.id for d in drivers.DRIVERS]
 
 
 def _cmd_commands(_args: argparse.Namespace) -> int:
     """Print the only frames this app is allowed to send, for manual checking."""
-    print(f"device info (0x97): {REQUEST_DEVICE_INFO.hex(' ').upper()}")
-    print(f"cell info   (0x96): {REQUEST_CELL_INFO.hex(' ').upper()}")
+    for d in drivers.DRIVERS:
+        print(f"{d.name} ({d.id}):")
+        labels = {r.frame: r.label for r in d.poll_requests + d.connect_requests}
+        for frame in sorted(d.allowed_frames):
+            print(f"  {labels.get(frame, '?'):28s} {frame.hex(' ').upper()}")
     return 0
 
 
@@ -31,24 +34,24 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     print(f"Scanning for {args.timeout:.0f} s...")
     results = asyncio.run(scan(args.timeout))
     for r in results:
-        mark = "JK?" if r.looks_like_jk else "   "
-        print(f"{mark} {r.address}  {r.rssi:4d} dBm  {r.name}")
-    print(f"{len(results)} device(s); 'JK?' = name starts with JK or advertises 0xFFE0")
+        print(f"{r.driver_id or '-':6s} {r.address}  {r.rssi:4d} dBm  {r.name}")
+    print(f"{len(results)} device(s); first column = recognised BMS driver")
     return 0
 
 
-def _variant(args: argparse.Namespace):
-    from .parser import Variant
+def _driver(args: argparse.Namespace):
+    return drivers.get(args.driver) if getattr(args, "driver", None) else None
 
-    return Variant(args.variant) if args.variant else None
+
+def _options(args: argparse.Namespace) -> dict:
+    return {"variant": args.variant} if getattr(args, "variant", None) else {}
 
 
 def _cmd_dump(args: argparse.Namespace) -> int:
     from .dump import run_dump
 
-    return asyncio.run(
-        run_dump(args.address, args.seconds, Path(args.log_dir), _variant(args))
-    )
+    return asyncio.run(run_dump(args.address, args.seconds, Path(args.log_dir),
+                                _driver(args), _options(args)))
 
 
 def _cmd_widget(args: argparse.Namespace) -> int:
@@ -59,7 +62,8 @@ def _cmd_widget(args: argparse.Namespace) -> int:
         address=args.address,
         replay=args.replay,
         speed=args.speed,
-        variant=_variant(args),
+        driver_id=args.driver,
+        options=_options(args),
         idle_threshold=args.idle_threshold,
         exit_after=args.exit_after,
         autostart_launch=args.autostart,
@@ -69,12 +73,15 @@ def _cmd_widget(args: argparse.Namespace) -> int:
 def _cmd_replay(args: argparse.Namespace) -> int:
     from .replay import run_replay
 
-    return run_replay(args.log, args.speed, args.loop, _variant(args))
+    from .capture import capture_driver_id
+
+    driver = _driver(args) or drivers.get(capture_driver_id(args.log))
+    return run_replay(args.log, args.speed, args.loop, driver, _options(args))
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="jkbms_widget", description="Read-only JK BMS BLE widget"
+        prog="jkbms_widget", description="Read-only BMS BLE widget (JK, more to come)"
     )
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -90,14 +97,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--address", help="BMS MAC address (default: auto-detect)")
     p.add_argument("--seconds", type=float, default=60.0, help="logging time, s")
     p.add_argument("--log-dir", default="logs", help="output folder")
-    p.add_argument("--variant", choices=VARIANTS, help="force protocol variant")
+    p.add_argument("--driver", choices=DRIVER_IDS, help="BMS family (default: detect / jk)")
+    p.add_argument("--variant", choices=VARIANTS, help="JK only: force protocol variant")
     p.set_defaults(func=_cmd_dump)
 
     p = sub.add_parser("replay", help="decode a captured log, no BMS needed")
     p.add_argument("log", help="capture file (logs/dump-*.txt or tests/fixtures/*.txt)")
     p.add_argument("--speed", type=float, default=1.0, help="1 = real time, 0 = no delays")
     p.add_argument("--loop", action="store_true", help="repeat forever")
-    p.add_argument("--variant", choices=VARIANTS, help="force protocol variant")
+    p.add_argument("--driver", choices=DRIVER_IDS, help="BMS family (default: detect / jk)")
+    p.add_argument("--variant", choices=VARIANTS, help="JK only: force protocol variant")
     p.set_defaults(func=_cmd_replay)
 
     p = sub.add_parser("widget", help="run the desktop widget")
@@ -107,7 +116,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--speed", type=float, default=1.0, help="replay speed factor")
     p.add_argument("--idle-threshold", type=float, default=None,
                    help="|I| below this (A) counts as Idle (saved)")
-    p.add_argument("--variant", choices=VARIANTS, help="force protocol variant")
+    p.add_argument("--driver", choices=DRIVER_IDS, help="BMS family (default: detect / jk)")
+    p.add_argument("--variant", choices=VARIANTS, help="JK only: force protocol variant")
     p.add_argument("--exit-after", type=float, default=None, help=argparse.SUPPRESS)
     # Added by the Windows Run entry: start without opening the dashboard.
     p.add_argument("--autostart", action="store_true", help=argparse.SUPPRESS)

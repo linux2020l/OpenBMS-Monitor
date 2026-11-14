@@ -321,11 +321,12 @@ class DashboardWindow(QWidget):
         self.tile_current.set_value(strings.fmt_current(cell.current), "A", stale)
         self.tile_power.set_value(*strings.fmt_power(cell.power), stale)
         self.tile_voltage.set_value(strings.fmt_voltage(cell.pack_voltage), "V", stale)
-        temp = max(cell.temperature_1, cell.temperature_2)
-        self.tile_temp.set_value(f"{temp:.0f}", "°C", stale)
-        upd("temp_tip", strings.TEMP_TOOLTIP.format(
-            t1=cell.temperature_1, t2=cell.temperature_2, mos=cell.mosfet_temperature),
-            self.tile_temp.setToolTip)
+        temp = cell.max_temperature
+        self.tile_temp.set_value(strings.NO_VALUE if temp is None else f"{temp:.0f}", "°C", stale)
+        tips = [strings.TEMP_SENSOR.format(n=n, t=t) for n, t in enumerate(cell.temperatures, 1)]
+        if cell.mosfet_temperature is not None:
+            tips.append(strings.TEMP_MOSFET.format(t=cell.mosfet_temperature))
+        upd("temp_tip", "\n".join(tips), self.tile_temp.setToolTip)
 
         upd("time_left", value_html(strings.fmt_hours(snap.hours_left), "", 18,
                                     theme.MUTED if stale else theme.TEXT), self.time_left.setText)
@@ -345,11 +346,14 @@ class DashboardWindow(QWidget):
         upd("cells_tip",
             "\n".join(f"#{n}: {v:.3f} V" for n, v in enumerate(cell.cell_voltages, 1))
             + f"\nΔ {delta_mv:.0f} mV", cells_lbl.setToolTip)
-        upd(f"row{strings.ROW_BALANCING}", strings.YES if cell.balancing else strings.NO,
+        def flag(value: bool | None, yes: str, no: str) -> str:
+            return strings.NO_VALUE if value is None else (yes if value else no)
+
+        upd(f"row{strings.ROW_BALANCING}", flag(cell.balancing, strings.YES, strings.NO),
             self.rows[strings.ROW_BALANCING].setText)
         upd(f"row{strings.ROW_MOSFETS}",
-            f"{strings.ON if cell.charging_enabled else strings.OFF} / "
-            f"{strings.ON if cell.discharging_enabled else strings.OFF}",
+            f"{flag(cell.charging_enabled, strings.ON, strings.OFF)} / "
+            f"{flag(cell.discharging_enabled, strings.ON, strings.OFF)}",
             self.rows[strings.ROW_MOSFETS].setText)
 
         faults = snap.fault_alarms

@@ -41,12 +41,15 @@ Hardware (from the official JK app "About" screen, app V6.4.05):
 
 ## Hard requirements
 
-1. **READ-ONLY.** Only the device-info (`0x97`) and cell-info (`0x96`) read
-   requests may ever be written to the BMS. Enforced by
-   `jkbms_widget/commands.py`: whole-frame allowlist, no generic frame builder.
-   The BLE layer must have exactly one write function and it must call
-   `ensure_read_only()` right before `write_gatt_char`. Never add a
-   register-write command, not even behind a flag or for testing.
+1. **READ-ONLY.** Only documented read requests may ever be written to a
+   BMS. For JK: device info (`0x97`) and cell info (`0x96`), defined in
+   `jkbms_widget/drivers/jk/commands.py`. Every driver declares its exact
+   frames in `allowed_frames` (whole-frame allowlist, no generic frame
+   builder). The BLE layer has exactly one write function
+   (`ble.send_request`) and it calls `driver.ensure_read_only()` right
+   before `write_gatt_char`. Never add a register-write / settings command
+   for any brand, not even behind a flag or for testing.
+   `tests/test_ble.py` checks every registered driver.
 2. Windows desktop, BLE only.
 3. Small always-on-top, frameless, draggable widget: SOC %, current (A, signed),
    power (W), state (Charging / Discharging / Idle; idle if |I| < 1.0 A,
@@ -96,13 +99,27 @@ History for the chart is in memory only (lost on restart), 10 s buckets.
   Do not run bleak on the Qt main thread (e.g. via qasync): Qt initializes COM
   as STA there and the WinRT backend misbehaves in STA threads.
 - Layering (keep it, it is what makes the Android port feasible):
-  - Pure Python, no BLE/GUI imports, unit-tested with captured frames:
-    `commands.py` (allowlist), `frames.py` (`FrameAssembler`: chunks →
-    CRC-valid 300-byte frames), `parser.py` (`Decoder`, `DeviceInfo`,
-    `CellInfo`, alarm names, `battery_state`), `capture.py` (log format),
-    `replay.py` (plays a capture back with original timing).
-  - `ble.py`: bleak only (scan, characteristic selection, the single write
-    function `send_request`). `dump.py`: live logger + decoded console output.
+  - `model.py` (pure): brand-independent `DeviceInfo`, `CellInfo` (fields a
+    BMS lacks are None/empty → UI shows "—"), alarm **codes**
+    (`ALARM_CODES`, `INFORMATIONAL_ALARMS`), `battery_state`, `describe`.
+  - `drivers/` (pure, BMS drivers; added 2026-11-15 to prepare Daly / JBD /
+    ANT / 100balance support): `base.py` (`BmsDriver`: id, name, GATT
+    UUIDs, `connect_requests`, `poll_requests` + interval, `poll_until_data`,
+    `allowed_frames`, `matches()` for scan detection, `new_decoder()`),
+    `__init__.py` (registry `DRIVERS`, `get()`, `detect()`; unknown/missing
+    id → JK, so old settings keep working).
+    `drivers/jk/`: `commands.py` (allowlist), `frames.py` (`FrameAssembler`:
+    chunks → CRC-valid 300-byte frames), `parser.py` (`Decoder`, variants,
+    JK alarm bit → code map `ALARM_BITS`; unknown bits → `jk_bit_N`).
+    Adding a brand: new `drivers/<brand>/` + register it + fixture from a
+    real capture + tests; UI texts for any new alarm codes in both
+    `strings*.py` (tests enforce it).
+  - `capture.py` (log format; `# driver <id>` header), `replay.py` (plays a
+    capture back with original timing).
+  - `ble.py`: bleak only (scan with driver detection, characteristic
+    selection by driver UUIDs + properties, the single write function
+    `send_request`). `dump.py`: live logger + decoded console output.
+  - Settings: `driver` (default "jk") + driver options (JK: `variant`).
   - `state.py` (pure): `StateTracker` (moving average + hysteresis),
     `time_left`, `History`, `Snapshot` (everything a view needs).
   - `strings.py` (pure): every user-visible string (uk) + formatters +
@@ -195,7 +212,7 @@ GATT:
 - esphome writes **without response**; works on our device. [esphome, real]
 
 Request frame (20 bytes): `AA 55 90 EB | cmd | len | value u32 LE | 9×00 | sum&0xFF`.
-Device info `...97 ... 11`, cell info `...96 ... 10`. [esphome; see commands.py]
+Device info `...97 ... 11`, cell info `...96 ... 10`. [esphome; see drivers/jk/commands.py]
 
 Connect sequence in esphome: subscribe to notify → send `0x97` once → send
 `0x96`; `0x96` is re-sent every poll (5 s) until a cell-info frame arrives.
@@ -243,7 +260,7 @@ Current resolution on our BMS is ~0.207 A (values 0, 0.413, 0.620, 0.827 A).
 In the first captures the inverter was in standby (kept on for fast
 automatic transfer) and really draws a fluctuating ~0–11 W, so the reading
 jumps around 0.5 A. This is a real load, not noise. Decision: idle threshold
-default 1.0 A (`parser.DEFAULT_IDLE_THRESHOLD`) so standby shows as Idle;
+default 1.0 A (`model.DEFAULT_IDLE_THRESHOLD`) so standby shows as Idle;
 the UI still adds hysteresis / a short moving average for the *state*
 (raw current and power are shown as is). [real]
 

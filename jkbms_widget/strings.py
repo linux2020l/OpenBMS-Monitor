@@ -31,44 +31,45 @@ STATUS_TEXT = {
     "replay": "Відтворення запису",
 }
 
-ALARM_TEXT: dict[int, str] = {
-    0: "Високий опір балансувальних проводів",
-    1: "Перегрів MOSFET",
-    2: "Кількість комірок не відповідає налаштуванням",
-    3: "Несправність датчика струму",
-    4: "Батарея повністю заряджена",
-    5: "Перенапруга батареї",
-    6: "Перевищення струму заряду",
-    7: "Коротке замикання під час заряду",
-    8: "Перегрів під час заряду",
-    9: "Занизька температура для заряду",
-    10: "Помилка зв'язку зі співпроцесором",
-    11: "Низька напруга комірки",
-    12: "Низька напруга батареї",
-    13: "Перевищення струму розряду",
-    14: "Коротке замикання під час розряду",
-    15: "Перегрів під час розряду",
-    16: "Несправність MOSFET заряду",
-    17: "Несправність MOSFET розряду",
-    18: "GPS-модуль відключено",
-    19: "Потрібно змінити пароль",
-    20: "Не вдалося увімкнути розряд",
-    21: "Перегрів батареї",
-    22: "Несправність датчика температури",
-    23: "Несправність PL-модуля (паралельне з'єднання)",
-    24: "Не вдалося зняти захист від КЗ",
-    25: "Перевищення струму розряду (рівень II)",
-    26: "Перевищення струму розряду (рівень III)",
-    27: "Занизька температура для розряду",
-    28: "Віддалене блокування через GPS",
+ALARM_TEXT: dict[str, str] = {
+    "balance_wire_resistance": "Високий опір балансувальних проводів",
+    "mosfet_overtemperature": "Перегрів MOSFET",
+    "cell_count_mismatch": "Кількість комірок не відповідає налаштуванням",
+    "current_sensor_fault": "Несправність датчика струму",
+    "fully_charged": "Батарея повністю заряджена",
+    "pack_overvoltage": "Перенапруга батареї",
+    "charge_overcurrent": "Перевищення струму заряду",
+    "charge_short_circuit": "Коротке замикання під час заряду",
+    "charge_overtemperature": "Перегрів під час заряду",
+    "charge_undertemperature": "Занизька температура для заряду",
+    "coprocessor_error": "Помилка зв'язку зі співпроцесором",
+    "cell_undervoltage": "Низька напруга комірки",
+    "pack_undervoltage": "Низька напруга батареї",
+    "discharge_overcurrent": "Перевищення струму розряду",
+    "discharge_short_circuit": "Коротке замикання під час розряду",
+    "discharge_overtemperature": "Перегрів під час розряду",
+    "charge_mosfet_fault": "Несправність MOSFET заряду",
+    "discharge_mosfet_fault": "Несправність MOSFET розряду",
+    "gps_disconnected": "GPS-модуль відключено",
+    "password_change_required": "Потрібно змінити пароль",
+    "discharge_on_failed": "Не вдалося увімкнути розряд",
+    "battery_overtemperature": "Перегрів батареї",
+    "temperature_sensor_fault": "Несправність датчика температури",
+    "parallel_module_fault": "Несправність PL-модуля (паралельне з'єднання)",
+    "short_circuit_release_failed": "Не вдалося зняти захист від КЗ",
+    "discharge_overcurrent_2": "Перевищення струму розряду (рівень II)",
+    "discharge_overcurrent_3": "Перевищення струму розряду (рівень III)",
+    "discharge_undertemperature": "Занизька температура для розряду",
+    "gps_remote_lock": "Віддалене блокування через GPS",
 }
 
 
-ALARM_UNKNOWN = "Невідома аварія (біт {bit})"
+ALARM_UNKNOWN = "Невідома аварія ({code})"
 
 
-def alarm_text(bit: int) -> str:
-    return ALARM_TEXT.get(bit, ALARM_UNKNOWN.format(bit=bit))
+def alarm_text(code: str) -> str:
+    """UI text for an alarm code (model.ALARM_CODES); unknown codes are shown as is."""
+    return ALARM_TEXT.get(code, ALARM_UNKNOWN.format(code=code))
 
 
 NO_VALUE = "—"
@@ -150,7 +151,6 @@ MENU_SCALE = "Масштаб"
 MENU_AUTOSTART = "Запускати разом з Windows"
 TIP_AUTOSTART_DEV = "Доступно лише у зібраній версії (.exe)"
 MENU_SETTINGS_FOLDER = "Відкрити теку налаштувань"
-SCALE_RESTART = "Масштаб {pct}% застосується після перезапуску програми."
 TASKBAR_UNSUPPORTED = (
     "Режим «на панелі завдань» працює лише з горизонтальною панеллю завдань "
     "без автоприховування. Повертаю плаваючий віджет."
@@ -171,7 +171,7 @@ DIM_LABEL = "Напівпрозорі й не заважають, коли ві�
 DIM_NOTE = ("Поки активне вікно розгорнуте чи на весь екран, віджет і смужка "
             "стають прозорими, а кліки проходять крізь них")
 SCALE_LABEL = "Масштаб інтерфейсу"
-SCALE_NOTE = "Масштаб і мова застосуються після перезапуску програми"
+SCALE_NOTE = "Масштаб і мова застосуються, щойно ви закриєте налаштування (програма перезапуститься за секунду)"
 LANGUAGE_LABEL = "Мова"
 # Language names are shown in their own language; only "auto" is translated.
 LANGUAGE_OPTIONS = [("auto", "Як у Windows"), ("uk", "Українська"), ("en", "English")]
@@ -185,12 +185,12 @@ REPLAY_NOTE = "Режим відтворення запису: BMS змінит�
 # BMS picker
 PICK_TITLE = "Вибір BMS"
 PICK_HINT = (
-    "Закрийте застосунок JK на телефоні: BMS, до якого вже підключено "
+    "Закрийте застосунок BMS на телефоні: BMS, до якого вже підключено "
     "телефон, не видно в пошуку."
 )
 PICK_SCANNING = "Пошук пристроїв Bluetooth…"
 PICK_FOUND = "Знайдено: {n}"
-PICK_NONE = "JK BMS не знайдено. Перевірте, що Bluetooth увімкнено, і повторіть пошук."
+PICK_NONE = "BMS не знайдено. Перевірте, що Bluetooth увімкнено, і повторіть пошук."
 PICK_SAVED_MARK = "(збережений)"
 PICK_NOT_SEEN = "зараз не видно в ефірі"
 PICK_SHOW_ALL = "Показати всі пристрої"
@@ -204,7 +204,8 @@ TILE_CURRENT = "Струм"
 TILE_POWER = "Потужність"
 TILE_VOLTAGE = "Напруга"
 TILE_TEMPERATURE = "Температура"
-TEMP_TOOLTIP = "Датчик 1: {t1:.1f} °C\nДатчик 2: {t2:.1f} °C\nMOSFET: {mos:.1f} °C"
+TEMP_SENSOR = "Датчик {n}: {t:.1f} °C"
+TEMP_MOSFET = "MOSFET: {t:.1f} °C"
 HEALTH_OK = "Акумулятор в нормі"
 HEALTH_OK_SUB = "Усі параметри в межах норми"
 HEALTH_ALARM = "Увага: активні аварії ({n})"

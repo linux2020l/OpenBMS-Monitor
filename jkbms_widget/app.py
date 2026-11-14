@@ -14,12 +14,13 @@ import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QLockFile, QObject, QPoint, QRect, QTimer, QUrl
+from PySide6.QtCore import QLockFile, QObject, QPoint, QProcess, QRect, QTimer, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QFont, QGuiApplication
 from PySide6.QtWidgets import QApplication, QDialog, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
 from . import autostart, strings, win_taskbar
-from .parser import CellInfo, DeviceInfo, Variant
+from . import drivers
+from .model import CellInfo, DeviceInfo
 from .settings import Settings, app_dir
 from .sources import BleSource, DataSource, ReplaySource
 from .history_store import RETENTION_S, HistoryStore
@@ -39,6 +40,27 @@ STALE_AFTER_S = 5.0  # no cell-info frame for this long -> show values as stale
 LIVE_STATUSES = ("connected", "replay")
 HISTORY_PRUNE_MS = 60 * 60 * 1000  # drop points older than 7 days once an hour
 MODE_WIDGET, MODE_TASKBAR = "widget", "taskbar"
+ONE_SHOT_FLAGS = {"--autostart": 0, "--exit-after": 1}  # flag -> number of values
+
+
+def restart_command(frozen: bool, executable: str, argv: list[str],
+                    orig_argv: list[str]) -> tuple[str, list[str]]:
+    """(program, args) that start this app again with the same options.
+
+    Drops one-shot flags: a restart is not a Windows autostart and must not
+    exit by itself. Dev runs (python -m jkbms_widget ...) are restarted with
+    the original interpreter options, the frozen exe with its own args.
+    """
+    args = list(argv[1:]) if frozen else list(orig_argv[1:])
+    out, skip = [], 0
+    for a in args:
+        if skip:
+            skip -= 1
+        elif a in ONE_SHOT_FLAGS:
+            skip = ONE_SHOT_FLAGS[a]
+        else:
+            out.append(a)
+    return executable, out
 
 
 class Controller(QObject):
@@ -50,14 +72,16 @@ class Controller(QObject):
         settings_path: Path | None = None,
         history_path: Path | None = None,
         replay: bool = False,
-        variant: Variant | None = None,
+        options: dict | None = None,
     ) -> None:
         super().__init__()
         self.settings = settings
         self.settings_path = settings_path
         self.history_path = history_path
         self.replay = replay
-        self.variant = variant or (Variant(settings.variant) if settings.variant else None)
+        # Driver options: command line wins, else settings (JK: forced protocol variant).
+        self.options = options if options is not None else (
+            {"variant": settings.variant} if settings.variant else {})
         self.source: DataSource | None = None
         self.tracker = StateTracker(settings.idle_threshold)
         self.history = History(on_bucket_closed=self._store_point)
@@ -68,6 +92,7 @@ class Controller(QObject):
         self.status, self.status_detail = "stopped", ""
         self.device_name = settings.bms_name
         self._shut_down = False
+        self.restart_pending = False  # run_widget starts a new copy after exit
         self._tray_key = None
 
         self.compact = CompactWindow()
@@ -134,7 +159,7 @@ class Controller(QObject):
         self.render()
 
     def _make_ble_source(self) -> BleSource:
-        return BleSource(self.settings.address, self.variant)
+        return BleSource(self.settings.address, drivers.get(self.settings.driver), self.options)
 
     def set_source(self, source: DataSource) -> None:
         old = self.source
@@ -379,14 +404,19 @@ class Controller(QObject):
 
         dlg.pick_requested.connect(pick)
         dlg.mode_changed.connect(mode)
-        dlg.scale_changed.connect(lambda s: self.set_scale(s, notify=False))
+        dlg.scale_changed.connect(lambda s: self.set_scale(s, restart=False))
         dlg.language_changed.connect(self.set_language)
         dlg.threshold_changed.connect(self.set_idle_threshold)
         dlg.fullscreen_changed.connect(self.set_fullscreen_behavior)
         dlg.dim_changed.connect(self.set_dim_when_maximized)
         dlg.autostart_changed.connect(self.set_autostart)
         dlg.open_folder.connect(self.open_data_folder)
+        before = (self.settings.ui_scale, self.settings.language)
         dlg.exec()
+        # Scale and language need new windows: restart once, when the user is
+        # done with the settings (not on every combo box change).
+        if (self.settings.ui_scale, self.settings.language) != before:
+            self.restart()
 
     def open_data_folder(self) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(app_dir())))
@@ -447,18 +477,20 @@ class Controller(QObject):
         was_running = self.source is not None and self.source.running
         if self.source is not None:
             self.source.stop(wait_s=3.0)  # a connected BMS does not advertise
-        dlg = BmsPickerDialog(self.settings.address, self.settings.bms_name,
+        dlg = BmsPickerDialog(self.settings.address, self.settings.bms_name, self.settings.driver,
                               scan_delay_ms=2000 if was_running else 0)
         if dlg.exec() == QDialog.Accepted and dlg.selected is not None:
             r = dlg.selected
             changed = r.address != self.settings.address
             if changed:
-                log.info("BMS selected: %s %r", r.address, r.name)
+                log.info("BMS selected: %s %r (%s)", r.address, r.name, r.driver_id)
                 self.save_history()  # keep the old BMS's open bucket
                 self.history.clear()
                 self.cell = None
                 self.tracker = StateTracker(self.settings.idle_threshold)
             self.settings.address, self.settings.bms_name = r.address, r.name
+            # Unknown device picked via "show all": try the default driver.
+            self.settings.driver = drivers.get(r.driver_id).id
             self.device_name = r.name
             self.save_settings()
             if changed:
@@ -469,16 +501,24 @@ class Controller(QObject):
             self.source.start()
         self.render()
 
-    def set_scale(self, scale: float, notify: bool = True) -> None:
+    def set_scale(self, scale: float, restart: bool = True) -> None:
+        """Qt applies a scale factor only at startup, so restart the app."""
+        changed = abs(scale - self.settings.ui_scale) > 0.001
         self.settings.ui_scale = scale
         self.save_settings()
-        if notify:
-            self._notify(strings.SCALE_RESTART.format(pct=round(scale * 100)))
+        if restart and changed:
+            self.restart()
 
     def set_language(self, lang: str) -> None:
-        """Saved now, applied at the next start (windows are built once)."""
+        """Saved now; open_settings restarts the app when the dialog closes."""
         self.settings.language = lang
         self.save_settings()
+
+    def restart(self) -> None:
+        """Quit and let run_widget start a fresh copy (about a second)."""
+        log.info("restart (scale=%s language=%s)", self.settings.ui_scale, self.settings.language)
+        self.restart_pending = True
+        self.quit()
 
     def toggle_autostart(self) -> None:
         self.set_autostart(not autostart.is_enabled())
@@ -594,7 +634,8 @@ def run_widget(
     address: str | None = None,
     replay: str | None = None,
     speed: float = 1.0,
-    variant: Variant | None = None,
+    driver_id: str | None = None,
+    options: dict | None = None,
     idle_threshold: float | None = None,
     exit_after: float | None = None,
     autostart_launch: bool = False,
@@ -604,10 +645,13 @@ def run_widget(
     settings = Settings.load(settings_path)
     if address:
         settings.address = address.upper()
+        if driver_id:
+            settings.driver = driver_id
     if idle_threshold is not None:
         settings.idle_threshold = idle_threshold
     # Scale must be set before QApplication exists.
-    if abs(settings.ui_scale - 1.0) > 0.01 and "QT_SCALE_FACTOR" not in os.environ:
+    own_scale_env = "QT_SCALE_FACTOR" not in os.environ  # not set by the user/tests
+    if abs(settings.ui_scale - 1.0) > 0.01 and own_scale_env:
         os.environ["QT_SCALE_FACTOR"] = f"{settings.ui_scale:g}"
     # Language must be set before any window is built (views read strings once).
     system_lang = strings.system_language()
@@ -631,9 +675,12 @@ def run_widget(
     app.setWindowIcon(icons.battery_level_icon(80, theme.GREEN))
 
     ctl = Controller(settings, settings_path, data / "history.sqlite", replay=bool(replay),
-                     variant=variant)
+                     options=options or None)
     if replay:
-        ctl.set_source(ReplaySource(replay, speed, variant))
+        from .capture import capture_driver_id
+
+        ctl.set_source(ReplaySource(replay, speed, drivers.get(driver_id or capture_driver_id(replay)),
+                                    options or {}))
     elif address:
         settings.address = address.upper()
         ctl.save_settings()
@@ -646,5 +693,13 @@ def run_widget(
     if exit_after:
         QTimer.singleShot(int(exit_after * 1000), ctl.quit)  # diagnostics / tests
     rc = app.exec()
-    lock.unlock()
+    lock.unlock()  # before the new copy starts, or it would see "already running"
+    if ctl.restart_pending:
+        if own_scale_env:
+            os.environ.pop("QT_SCALE_FACTOR", None)  # the new copy reads the new scale
+        program, args = restart_command(bool(getattr(sys, "frozen", False)), sys.executable,
+                                        sys.argv, getattr(sys, "orig_argv", sys.argv))
+        result = QProcess.startDetached(program, args)
+        if not (result[0] if isinstance(result, tuple) else result):
+            log.error("restart failed: %s %s", program, args)
     return rc

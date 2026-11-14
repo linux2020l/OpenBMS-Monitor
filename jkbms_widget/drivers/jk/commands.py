@@ -1,7 +1,8 @@
 """Read-only request frames for the JK BMS BLE protocol (JK02 / JK04).
 
 SAFETY RULE: this module is the single source of bytes that may ever be
-written to the BMS. It deliberately exposes NO generic frame builder:
+written to a JK BMS (drivers/jk/__init__.py uses ALLOWED_FRAMES as the JK
+driver's allowlist). It deliberately exposes NO generic frame builder:
 only two pre-built, constant read requests exist, and `ensure_read_only()`
 must be called by the BLE layer on every write.
 
@@ -25,6 +26,8 @@ Request frame layout (20 bytes), verified against syssi/esphome-jk-bms
 
 from enum import IntEnum
 
+from ..base import ForbiddenCommandError
+
 REQUEST_HEADER = bytes([0xAA, 0x55, 0x90, 0xEB])
 REQUEST_FRAME_LENGTH = 20
 
@@ -34,10 +37,6 @@ class Command(IntEnum):
 
     CELL_INFO = 0x96  # start streaming cell info frames (type 0x02)
     DEVICE_INFO = 0x97  # request one device info frame (type 0x03)
-
-
-class ForbiddenCommandError(RuntimeError):
-    """Raised when something tries to write a non-allowlisted frame."""
 
 
 def checksum(data: bytes) -> int:

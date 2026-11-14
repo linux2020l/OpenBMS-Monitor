@@ -19,13 +19,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
-from .parser import CellInfo, Decoder, DeviceInfo, Variant
+from . import drivers
+from .drivers import BmsDriver
+from .model import CellInfo, DeviceInfo
 
 log = logging.getLogger("jkbms_widget.ble")
 
 RECONNECT_DELAY_S = 5.0  # wait between connection attempts
 DATA_TIMEOUT_S = 10.0  # no notification for this long = connection is dead
-CELL_INFO_RETRY_S = 5.0  # re-send 0x96 until the first cell-info frame
 
 
 class DataSource(QObject):
@@ -72,15 +73,18 @@ class DataSource(QObject):
 class ReplaySource(DataSource):
     """Plays a capture file in an endless loop (mock BMS)."""
 
-    def __init__(self, path: str | Path, speed: float = 1.0, variant: Variant | None = None):
+    def __init__(self, path: str | Path, speed: float = 1.0, driver: BmsDriver | None = None,
+                 options: dict | None = None):
         super().__init__()
-        self.path, self.speed, self.variant = Path(path), speed, variant
+        self.path, self.speed = Path(path), speed
+        self.driver = driver or drivers.DEFAULT_DRIVER
+        self.options = options or {}
 
     def _run(self) -> None:
         from .replay import iter_chunks
 
         self.status.emit("replay", self.path.name)
-        decoder = Decoder(self.variant)
+        decoder = self.driver.new_decoder(**self.options)
         # Interruptible sleep: wakes up immediately when stop() is called.
         for chunk in iter_chunks(self.path, self.speed or 1.0, loop=True, sleep=self._stop.wait):
             if self._stop.is_set():
@@ -93,9 +97,12 @@ class ReplaySource(DataSource):
 class BleSource(DataSource):
     """Connects to the BMS, streams data, reconnects when the link drops."""
 
-    def __init__(self, address: str, variant: Variant | None = None):
+    def __init__(self, address: str, driver: BmsDriver | None = None,
+                 options: dict | None = None):
         super().__init__()
-        self.address, self.variant = address, variant
+        self.address = address
+        self.driver = driver or drivers.DEFAULT_DRIVER
+        self.options = options or {}  # driver options, e.g. JK {"variant": "JK02_32S"}
 
     def _run(self) -> None:
         asyncio.run(self._main())
@@ -118,8 +125,8 @@ class BleSource(DataSource):
         from bleak import BleakClient, BleakScanner
 
         from .ble import select_characteristics, send_request
-        from .commands import REQUEST_CELL_INFO, REQUEST_DEVICE_INFO
 
+        drv = self.driver
         self.status.emit("connecting", self.address)
         device = await BleakScanner.find_device_by_address(self.address, timeout=10.0)
         if device is None:
@@ -127,7 +134,7 @@ class BleSource(DataSource):
         if self._stop.is_set():
             return
 
-        decoder = Decoder(self.variant)
+        decoder = drv.new_decoder(**self.options)
         disconnected = asyncio.Event()
         last_rx = time.monotonic()
         got_cell_info = False
@@ -142,22 +149,27 @@ class BleSource(DataSource):
         async with BleakClient(
             device, disconnected_callback=lambda _c: disconnected.set()
         ) as client:
-            write_char, notify_char = select_characteristics(client.services)
+            write_char, notify_char = select_characteristics(client.services, drv)
             await client.start_notify(notify_char, on_notify)
             self.status.emit("connected", device.name or self.address)
 
-            await send_request(client, write_char, REQUEST_DEVICE_INFO)
-            await asyncio.sleep(1.0)
-            await send_request(client, write_char, REQUEST_CELL_INFO)
-            next_retry = time.monotonic() + CELL_INFO_RETRY_S
+            for req in drv.connect_requests:
+                await send_request(client, write_char, req.frame, drv)
+                if req.delay_after_s:
+                    await asyncio.sleep(req.delay_after_s)
+            next_poll = time.monotonic() + drv.poll_interval_s
             last_rx = time.monotonic()
 
             while not self._stop.is_set() and not disconnected.is_set():
                 await asyncio.sleep(0.2)
                 now = time.monotonic()
-                if not got_cell_info and now >= next_retry:
-                    await send_request(client, write_char, REQUEST_CELL_INFO)
-                    next_retry = now + CELL_INFO_RETRY_S
+                polling = drv.poll_requests and not (drv.poll_until_data and got_cell_info)
+                if polling and now >= next_poll:
+                    for req in drv.poll_requests:
+                        await send_request(client, write_char, req.frame, drv)
+                        if req.delay_after_s:
+                            await asyncio.sleep(req.delay_after_s)
+                    next_poll = now + drv.poll_interval_s
                 if now - last_rx > DATA_TIMEOUT_S:
                     raise TimeoutError(f"no data for {DATA_TIMEOUT_S:.0f} s")
             # Leaving the `async with` block disconnects from the BMS.

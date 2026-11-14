@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from jkbms_widget.capture import CaptureEvent, format_event, read_capture  # noqa: E402
-from jkbms_widget.frames import FRAME_SIZE, RESPONSE_HEADER, _strip_length_prefix, checksum  # noqa: E402
+from jkbms_widget.drivers.jk.frames import FRAME_SIZE, RESPONSE_HEADER, _strip_length_prefix, checksum  # noqa: E402
 
 # (offset, size) of private fields in the device-info frame (type 0x03),
 # found by inspecting real frames from JK_B1A8S20P HW 11A / SW 11.53 and

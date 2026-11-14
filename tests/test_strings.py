@@ -46,13 +46,22 @@ def test_set_language_switches_texts_and_formatters():
     strings.set_language("en")
     assert strings.language == "en"
     assert strings.STATE_NAMES["Discharging"] == "Discharging"
-    assert strings.alarm_text(11) == "Cell undervoltage"
-    assert strings.alarm_text(31) == "Unknown alarm (bit 31)"
+    assert strings.alarm_text("cell_undervoltage") == "Cell undervoltage"
+    assert strings.alarm_text("jk_bit_31") == "Unknown alarm (jk_bit_31)"
     assert strings.fmt_time_left_long(3.8, "empty") == "≈ 3.8 h to empty"
     assert strings.fmt_hours(0.5) == "≈ 30 min"
     strings.set_language("uk")
     assert strings.fmt_time_left_long(3.8, "empty") == "≈ 3.8 год до розряду"
-    assert strings.alarm_text(11) == "Низька напруга комірки"
+    assert strings.alarm_text("cell_undervoltage") == "Низька напруга комірки"
+
+
+def test_every_alarm_code_has_a_text_in_every_language():
+    from jkbms_widget.model import ALARM_CODES
+
+    for lang in strings.LANGUAGES:
+        strings.set_language(lang)
+        missing = [c for c in ALARM_CODES if c not in strings.ALARM_TEXT]
+        assert missing == [], lang
 
 
 @pytest.mark.parametrize(

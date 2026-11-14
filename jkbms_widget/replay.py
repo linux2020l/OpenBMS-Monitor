@@ -11,7 +11,8 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from .capture import read_capture
-from .parser import CellInfo, Decoder, DeviceInfo, Variant
+from .drivers import BmsDriver
+from .model import describe
 
 
 def iter_chunks(
@@ -39,23 +40,11 @@ def iter_chunks(
             return
 
 
-def run_replay(path: str | Path, speed: float, loop: bool, variant: Variant | None) -> int:
-    decoder = Decoder(variant)
+def run_replay(path: str | Path, speed: float, loop: bool, driver: BmsDriver,
+               options: dict | None = None) -> int:
+    decoder = driver.new_decoder(**(options or {}))
     for chunk in iter_chunks(path, speed, loop):
         for obj in decoder.feed(chunk):
             print(describe(obj))
-    s = decoder.assembler.stats
-    print(
-        f"done: {s.frames_ok} frames OK, {s.crc_errors} CRC errors, "
-        f"{s.dropped_chunks} dropped chunks, {decoder.skipped_cell_frames} skipped"
-    )
+    print(f"done: {decoder.stats_text()}")
     return 0
-
-
-def describe(obj: DeviceInfo | CellInfo) -> str:
-    if isinstance(obj, DeviceInfo):
-        return (
-            f"device: {obj.model} HW {obj.hardware_version} SW {obj.software_version} "
-            f"name {obj.name!r}"
-        )
-    return obj.summary()

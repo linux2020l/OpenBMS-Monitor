@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from jkbms_widget.app import MODE_TASKBAR, MODE_WIDGET, Controller  # noqa: E402
 from jkbms_widget.capture import read_capture  # noqa: E402
-from jkbms_widget.parser import CellInfo, Decoder, DeviceInfo  # noqa: E402
+from jkbms_widget.drivers.jk.parser import CellInfo, Decoder, DeviceInfo  # noqa: E402
 from jkbms_widget.settings import Settings  # noqa: E402
 from jkbms_widget.sources import DataSource  # noqa: E402
 from jkbms_widget.ui.alarms import AlarmDialog  # noqa: E402
@@ -283,9 +283,32 @@ def test_updater_skips_unchanged_values():
 
 
 def test_alarm_dialog_lists_alarms_in_ukrainian(app):
-    dlg = AlarmDialog((4, 11), stale=False)  # keep a reference while reading children
+    dlg = AlarmDialog(("fully_charged", "cell_undervoltage"), stale=False)  # keep a reference
     texts = [w.text() for w in dlg.findChildren(QLabel)]
     assert "Батарея повністю заряджена" in texts
     assert "Низька напруга комірки" in texts
     dlg_empty = AlarmDialog((), stale=False)
     assert "Активних аварій немає" in [w.text() for w in dlg_empty.findChildren(QLabel)]
+
+
+def test_restart_command_keeps_options_but_drops_one_shot_flags():
+    from jkbms_widget.app import restart_command
+
+    exe = r"C:\Apps\JkBmsWidget\JkBmsWidget.exe"
+    assert restart_command(True, exe, [exe, "--autostart"], []) == (exe, [])
+    assert restart_command(True, exe, [exe, "--exit-after", "8", "widget"], []) == (exe, ["widget"])
+    py = r"C:\venv\python.exe"
+    orig = [py, "-m", "jkbms_widget", "widget", "--replay", "f.txt", "--exit-after", "5"]
+    assert restart_command(False, py, ["ignored"], orig) == (py, ["-m", "jkbms_widget", "widget",
+                                                                 "--replay", "f.txt"])
+
+
+def test_scale_change_restarts_and_same_scale_does_not(app, monkeypatch):
+    ctl, _ = make_controller(ui_scale=1.0)
+    quits = []
+    monkeypatch.setattr(ctl, "quit", lambda: quits.append(1))
+    ctl.set_scale(1.0)  # unchanged: nothing to do
+    assert not ctl.restart_pending and quits == []
+    ctl.set_scale(1.25)
+    assert ctl.restart_pending and quits == [1]
+    assert ctl.settings.ui_scale == 1.25

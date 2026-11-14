@@ -3,8 +3,8 @@ from pathlib import Path
 import pytest
 
 from jkbms_widget.capture import read_capture
-from jkbms_widget.commands import checksum
-from jkbms_widget.frames import FRAME_SIZE, FrameAssembler, is_valid_frame
+from jkbms_widget.drivers.jk.commands import checksum
+from jkbms_widget.drivers.jk.frames import FRAME_SIZE, FrameAssembler, is_valid_frame
 
 FIXTURE = Path(__file__).parent / "fixtures" / "jk02_32s_b1a8s20p_windows.txt"
 

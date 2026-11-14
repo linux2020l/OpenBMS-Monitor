@@ -1,6 +1,6 @@
 import pytest
 
-from jkbms_widget.parser import CellInfo
+from jkbms_widget.model import CellInfo
 from jkbms_widget.state import (
     CHARGING,
     DISCHARGING,
@@ -48,9 +48,9 @@ def cell(remaining=297.25, nominal=297.44):
     return CellInfo(
         cell_voltages=(3.39,) * 4, pack_voltage=13.56, current=0.0, soc=100,
         remaining_capacity=remaining, nominal_capacity=nominal, cycle_count=75,
-        soh=98, temperature_1=12.0, temperature_2=12.0, mosfet_temperature=15.0,
-        alarm_bits=0, charging_enabled=True, discharging_enabled=True,
-        balancing=False, balance_current=0.0, counter=0,
+        soh=98, temperatures=(12.0, 12.0), mosfet_temperature=15.0,
+        charging_enabled=True, discharging_enabled=True,
+        balancing=False, balance_current=0.0,
     )
 
 
@@ -58,6 +58,17 @@ def test_time_left():
     assert time_left(cell(), -0.6) == (pytest.approx(297.25 / 0.6), "empty")
     assert time_left(cell(remaining=100), 10.0) == (pytest.approx(19.744), "full")
     assert time_left(cell(), 0.05) == (None, None)
+    # A BMS that does not report capacity: no estimate instead of a crash.
+    assert time_left(cell(remaining=None, nominal=None), -5.0) == (None, None)
+
+
+def test_minimal_reading_from_a_simple_bms():
+    from jkbms_widget.state import Snapshot
+
+    c = CellInfo(cell_voltages=(3.3, 3.31), pack_voltage=6.61, current=-2.0, soc=50,
+                 alarms=("fully_charged", "cell_undervoltage"))
+    assert c.max_temperature is None and c.power == pytest.approx(-13.22)
+    assert Snapshot(cell=c).fault_alarms == ("cell_undervoltage",)  # info is not a fault
 
 
 def test_history_buckets_and_span():
@@ -81,8 +92,8 @@ def test_formatters():
     assert fmt_hours(0.5) == "≈ 30 хв"
     assert fmt_hours(3.8) == "≈ 3.8 год"
     assert fmt_hours(495) == "≈ 21 дн"
-    assert alarm_text(11) == "Низька напруга комірки"
-    assert alarm_text(31) == "Невідома аварія (біт 31)"
+    assert alarm_text("cell_undervoltage") == "Низька напруга комірки"
+    assert alarm_text("jk_bit_31") == "Невідома аварія (jk_bit_31)"
 
 
 def test_time_left_texts():

@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from .. import strings
-from ..parser import INFORMATIONAL_ALARM_BITS
+from ..model import INFORMATIONAL_ALARMS
 from . import icons, theme
 from .widgets import DragMover, rounded_corners
 
@@ -44,13 +44,13 @@ class AlarmDialog(QDialog):
             row.addWidget(ic)
             row.addWidget(QLabel(strings.NO_ALARMS), 1)
             lay.addLayout(row)
-        for bit in alarms:
-            info = bit in INFORMATIONAL_ALARM_BITS
+        for code in alarms:
+            info = code in INFORMATIONAL_ALARMS
             row = QHBoxLayout()
             ic = QLabel()
             ic.setPixmap(icons.pixmap("info" if info else "warning",
                                       theme.BLUE if info else theme.RED, 20))
-            text = QLabel(strings.alarm_text(bit))
+            text = QLabel(strings.alarm_text(code))
             text.setWordWrap(True)
             row.addWidget(ic)
             row.addWidget(text, 1)

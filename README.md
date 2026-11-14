@@ -45,7 +45,7 @@ settings).*
 The app can send **exactly two** request frames to the BMS: device info
 (`0x97`) and cell info (`0x96`). Every outgoing write passes through one
 function that checks the **whole frame** against an allowlist in
-[`jkbms_widget/commands.py`](jkbms_widget/commands.py); anything else raises
+[`jkbms_widget/drivers/jk/commands.py`](jkbms_widget/drivers/jk/commands.py); anything else raises
 `ForbiddenCommandError` and is never sent. There is no code that changes BMS
 settings, and there never will be: use the official JK app for that.
 
@@ -163,9 +163,9 @@ register it in `strings.LANGUAGES` and `LANGUAGE_OPTIONS`.
 
 ```
 jkbms_widget/
-  commands.py        read-only request frames + allowlist (safety gate)
-  frames.py          notification chunks -> CRC-checked 300-byte frames
-  parser.py          device-info / cell-info decoding, alarm names
+  model.py           brand-independent battery data + alarm codes
+  drivers/           one package per BMS family (base.py = what a driver provides)
+    jk/              JK: commands.py (read-only allowlist), frames.py, parser.py
   capture.py         raw capture log format;  replay.py: play a capture back
   ble.py             bleak: scan, characteristic selection, the only write path
   dump.py            live logger with decoded console output
