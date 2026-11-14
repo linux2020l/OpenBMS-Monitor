@@ -12,15 +12,17 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from .. import strings
-from ..state import History, Snapshot
+from ..state import History, Snapshot, energy_kwh, local_midnight
 from . import icons, theme
 from .compact import STATE_COLORS, alarm_button_style, icon_button, value_html
+from .cells import CellsView
 from .chart import CHARGE_COLOR, DISCHARGE_COLOR, ZERO_COLOR, HistoryChart
 from .widgets import DragMover, SocRing, StatusDot, Updater, rounded_corners
 
@@ -231,6 +233,19 @@ class DashboardWindow(QWidget):
         self.alarm_btn.setToolTip(strings.TIP_ALARMS)
         self.alarm_btn.clicked.connect(self.alarms_requested)
         grid.addWidget(self.alarm_btn, r, 1, Qt.AlignRight)
+        # Energy comes from the history (not from live data): separate rows,
+        # refreshed together with the chart.
+        self.energy_rows: dict[str, QLabel] = {}
+        for k, key in enumerate((strings.ROW_ENERGY_TODAY, strings.ROW_ENERGY_WEEK), r + 1):
+            name = muted(key)
+            name.setToolTip(strings.ENERGY_TIP)
+            grid.addWidget(name, k, 0)
+            val = QLabel()
+            val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            val.setStyleSheet("font-size: 11pt;")
+            val.setToolTip(strings.ENERGY_TIP)
+            grid.addWidget(val, k, 1)
+            self.energy_rows[key] = val
         v.addLayout(grid)
         v.addStretch(1)
         return panel
@@ -243,19 +258,32 @@ class DashboardWindow(QWidget):
         ic = QLabel()
         ic.setPixmap(icons.pixmap("chart", theme.BLUE, 22))
         head.addWidget(ic)
-        t = QLabel(strings.CHART_TITLE)
-        t.setStyleSheet("font-size: 12pt;")
-        head.addWidget(t)
+        # Tabs: chart / cells (owner's choice 2026-11-15: a tab, not a window).
+        tabs = QButtonGroup(self)
+        self.tab_buttons: list[QPushButton] = []
+        for index, text in enumerate((strings.TAB_CHART, strings.TAB_CELLS)):
+            b = QPushButton(text)
+            b.setProperty("range", True)
+            b.setCheckable(True)
+            b.setChecked(index == 0)
+            b.clicked.connect(lambda _=False, i=index: self._set_tab(i))
+            tabs.addButton(b)
+            self.tab_buttons.append(b)
+            head.addWidget(b)
         head.addStretch(1)
+        # Chart-only controls (hidden on the cells tab).
+        self.chart_controls = QWidget()
+        cc = QHBoxLayout(self.chart_controls)
+        cc.setContentsMargins(0, 0, 0, 0)
         # Both panels use the same colour meaning (SOC in pastel shades).
         for text, color in ((strings.LEGEND_CHARGE, CHARGE_COLOR),
                             (strings.LEGEND_DISCHARGE, DISCHARGE_COLOR),
                             (strings.LEGEND_IDLE, ZERO_COLOR)):
             dot = StatusDot(10)
             dot.set_color(color)
-            head.addWidget(dot)
-            head.addWidget(QLabel(text))
-            head.addSpacing(10)
+            cc.addWidget(dot)
+            cc.addWidget(QLabel(text))
+            cc.addSpacing(10)
         group = QButtonGroup(self)
         for text, span in strings.CHART_RANGES:
             b = QPushButton(text)
@@ -264,11 +292,22 @@ class DashboardWindow(QWidget):
             b.setChecked(span == self.span_s)
             b.clicked.connect(lambda _=False, s=span: self._set_span(s))
             group.addButton(b)
-            head.addWidget(b)
+            cc.addWidget(b)
+        head.addWidget(self.chart_controls)
         v.addLayout(head)
+        self.pages = QStackedWidget()
         self.chart = HistoryChart()
-        v.addWidget(self.chart, 1)
+        self.cells = CellsView()
+        self.pages.addWidget(self.chart)
+        self.pages.addWidget(self.cells)
+        v.addWidget(self.pages, 1)
         return box
+
+    def _set_tab(self, index: int) -> None:
+        self.pages.setCurrentIndex(index)
+        self.tab_buttons[index].setChecked(True)  # also when switched from code
+        self.chart_controls.setVisible(index == 0)
+        self.cells.update()
 
     def _set_span(self, span_s: float) -> None:
         self.span_s = span_s
@@ -280,9 +319,16 @@ class DashboardWindow(QWidget):
         if not force and now - self._chart_at < CHART_REFRESH_S:
             return
         self._chart_at = now
-        self.chart.set_data(
-            self.history.series(self.span_s, time.time()), self.span_s, strings.CHART_EMPTY
-        )
+        wall = time.time()
+        self.chart.set_data(self.history.series(self.span_s, wall), self.span_s, strings.CHART_EMPTY)
+        week = self.history.series(7 * 24 * 3600, wall)
+        for key, since in ((strings.ROW_ENERGY_TODAY, local_midnight(wall)),
+                           (strings.ROW_ENERGY_WEEK, wall - 7 * 24 * 3600)):
+            charged, discharged = energy_kwh(week, since, self.history.bucket_s)
+            html = (f'<span style="color:{CHARGE_COLOR}">{charged:.2f}</span> / '
+                    f'<span style="color:{DISCHARGE_COLOR}">{discharged:.2f}</span>'
+                    f' <span style="color:{theme.MUTED}">kWh</span>')
+            self.upd(f"energy{key}", html, self.energy_rows[key].setText)
 
     def showEvent(self, event) -> None:
         self.refresh_chart(force=True)
@@ -304,6 +350,7 @@ class DashboardWindow(QWidget):
             self.connect_btn.setText)
 
         self.ring.set_value(None if cell is None else cell.soc, stale)
+        self.cells.set_cell(cell, stale)
         alarm_button_style(self.alarm_btn, snap, 18, upd, none_text=strings.ALARMS_NONE)
 
         if cell is None:

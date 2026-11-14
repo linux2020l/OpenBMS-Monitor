@@ -80,12 +80,13 @@ QComboBox {{
     background: {CARD}; border: 1px solid {CARD_BORDER}; border-radius: 6px;
     padding: 4px 8px; min-height: 22px;
 }}
-QDoubleSpinBox {{
+QDoubleSpinBox, QSpinBox {{
     background: {CARD}; border: 1px solid {CARD_BORDER}; border-radius: 6px;
     min-height: 30px;
 }}
-QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{ width: 0px; border: none; }}
-QComboBox:hover, QDoubleSpinBox:hover {{ border-color: {GREY}; }}
+QDoubleSpinBox::up-button, QDoubleSpinBox::down-button,
+QSpinBox::up-button, QSpinBox::down-button {{ width: 0px; border: none; }}
+QComboBox:hover, QDoubleSpinBox:hover, QSpinBox:hover {{ border-color: {GREY}; }}
 QComboBox QAbstractItemView {{
     background: {CARD}; border: 1px solid {CARD_BORDER}; selection-background-color: {HOVER};
 }}

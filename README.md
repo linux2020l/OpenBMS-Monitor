@@ -14,6 +14,12 @@ the battery and you want to see what it is doing at a glance.
 |---|---|
 | ![Taskbar strip: discharging, charging, fault](docs/screenshots/taskbar.png) | ![Floating widget](docs/screenshots/widget.png) |
 
+<details><summary>Cells tab</summary>
+
+![Cells tab: one bar per cell, lowest blue, highest amber](docs/screenshots/cells.png)
+
+</details>
+
 *Screenshots use demo data. The interface is available in **English** and
 **Ukrainian** (follows the Windows display language, can be changed in
 settings).*
@@ -30,6 +36,12 @@ settings).*
 - **History chart**: SOC and current for 1 h / 6 h / 24 h / 7 days, stored
   per BMS in SQLite, survives restarts. Hover to see time, SOC, current,
   voltage and power. Colours show charge (green) / discharge (amber).
+- **Cells tab**: every cell voltage as a bar (lowest blue, highest amber),
+  spread in mV, average, balancing, temperatures.
+- **Energy counters**: kWh charged / discharged today and over 7 days.
+- **Windows notifications**: low charge (threshold in settings), new BMS
+  alarms, connection lost for a minute, fully charged. Each fires once.
+- **CSV export** of the history (menu → *Export history (CSV)…*).
 - **Alarms in plain language**: click the indicator for the list of active
   protections (e.g. cell undervoltage, charge overtemperature).
 - **Charging / Discharging / Idle** with a configurable idle threshold, so an

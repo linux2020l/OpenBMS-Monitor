@@ -132,6 +132,16 @@ History for the chart is in memory only (lost on restart), 10 s buckets.
     60 s, saved to `Documents\JK BMS Monitor\`). Community guide:
     `docs/captures.md`, issue template `.github/ISSUE_TEMPLATE/bms-capture.yml`.
     `dump.py` (CLI, raw unsanitized developer log) still has its own loop.
+  - Step C (owner's choices 2026-11-15): `notifications.py` (pure
+    `Notifier`: low SOC with 5 % re-arm, new fault codes only, lost after
+    60 s of reconnecting — not after a manual disconnect, full while
+    charging — not when started full; shown as tray balloons via
+    `Controller._toast`, never a modal box; settings `notify_enabled`,
+    `low_soc_threshold`); `state.energy_kwh/local_midnight` (kWh from
+    10 s history buckets, today + 7 days, dashboard status panel, refreshed
+    with the chart); `ui/cells.py` (cells **tab** next to the chart in the
+    dashboard); `state.history_csv` + menu "Export history (CSV)…"
+    (comma, dot decimals, local ISO time).
   - `capture.py` (log format; `# driver <id>` header), `replay.py` (plays a
     capture back with original timing).
   - `ble.py`: bleak only (scan with driver detection, characteristic

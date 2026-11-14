@@ -82,6 +82,27 @@ def test_history_buckets_and_span():
     assert [p.time for p in h.series(span_s=20, now=1059.0)] == [1040, 1050]
 
 
+def test_energy_counters_integrate_buckets():
+    from jkbms_widget.state import HistoryPoint, energy_kwh
+
+    pts = [HistoryPoint(t, 50, 36.0, 13.0) for t in range(0, 3600, 10)]  # 1 h, +36 A
+    pts += [HistoryPoint(3600 + t, 50, -10.0, None) for t in range(0, 1800, 10)]  # old: no V
+    charged, discharged = energy_kwh(pts, since=0)
+    assert charged == pytest.approx(13.0 * 36 / 1000)  # 0.468 kWh
+    assert discharged == pytest.approx(13.0 * 10 * 0.5 / 1000)  # nearest voltage used
+    assert energy_kwh(pts, since=3600)[0] == 0.0  # only the discharge half
+    assert energy_kwh([], since=0) == (0.0, 0.0)
+
+
+def test_local_midnight():
+    from datetime import datetime
+
+    from jkbms_widget.state import local_midnight
+
+    t = datetime(2026, 11, 15, 13, 45, 10).timestamp()
+    assert local_midnight(t) == datetime(2026, 11, 15).timestamp()
+
+
 def test_formatters():
     from jkbms_widget.strings import alarm_text, fmt_current, fmt_hours, fmt_power
 
@@ -112,3 +133,26 @@ def test_history_drops_old_points():
     h.add(10.0, 50, 1.0)
     h.add(500.0, 50, 1.0)
     assert [p.time for p in h.series(10_000, 500.0)] == [500.0]
+
+
+def test_history_csv_rows():
+    from jkbms_widget.state import CSV_HEADER, HistoryPoint, history_csv
+
+    text = history_csv([HistoryPoint(1_763_200_000.0, 76.0, -4.25, 13.21),
+                        HistoryPoint(1_763_200_010.0, 76.0, 1.5, None)])
+    lines = text.strip().split("\n")
+    assert lines[0] == CSV_HEADER
+    assert lines[1].endswith(",1763200000,76,-4.250,13.210,-56.1")
+    assert lines[2].endswith(",1763200010,76,1.500,,")  # old point: no voltage
+
+
+def test_cell_bars_stay_steady_on_millivolt_noise():
+    from jkbms_widget.ui.cells import MAX_BAR, MIN_BAR, bar_shares
+
+    assert bar_shares(()) == []
+    assert bar_shares((3.3, 3.3)) == pytest.approx([0.55, 0.55])  # equal cells: mid height
+    a = bar_shares((3.301, 3.302, 3.302, 3.303))
+    b = bar_shares((3.302, 3.302, 3.301, 3.303))  # noise swaps which cell is lowest
+    assert max(abs(x - y) for x, y in zip(a, b)) < 0.02  # bars barely move
+    big = bar_shares((3.20, 3.30, 3.40))  # real 200 mV imbalance still spans the scale
+    assert big[0] < MIN_BAR + 0.1 and big[2] > MAX_BAR - 0.1

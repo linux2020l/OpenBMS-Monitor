@@ -263,6 +263,37 @@ PICK_CAPTURE_ONLY = (
     "щоб ми додали повну підтримку."
 )
 
+# Notifications
+NOTIFY_LOW_SOC = "Низький заряд батареї: {soc}%"
+NOTIFY_FULL = "Батарею повністю заряджено"
+NOTIFY_ALARM = "Аварія BMS: {names}"
+NOTIFY_LOST = "Немає зв'язку з BMS понад хвилину"
+NOTIFY_LABEL = "Сповіщення Windows"
+NOTIFY_NOTE = "Низький заряд, нові аварії, втрата зв'язку на хвилину, повний заряд"
+LOW_SOC_LABEL = "Поріг низького заряду"
+
+# Energy counters (dashboard)
+ROW_ENERGY_TODAY = "Енергія сьогодні:"
+ROW_ENERGY_WEEK = "Енергія за 7 днів:"
+ENERGY_TIP = ("Заряд / розряд, кВт·год. Рахується з історії, тож час, коли програма "
+              "не працювала, не враховано.")
+
+# Cells tab (dashboard)
+TAB_CHART = "Графік"
+TAB_CELLS = "Комірки"
+CELLS_SUMMARY = "Δ {delta:.0f} mV · середня {avg:.3f} V · мін №{imin} · макс №{imax}"
+CELLS_NO_DATA = "Немає даних від BMS"
+CELLS_BALANCING = "Балансування"
+
+# CSV export
+MENU_EXPORT_CSV = "Експорт історії (CSV)…"
+EXPORT_TITLE = "Експорт історії"
+EXPORT_DONE = "Історію збережено: {path} ({n} записів)"
+EXPORT_EMPTY = "Історія порожня, нема чого експортувати."
+
+SECTION_DATA = "ДАНІ"
+LOW_SOC_TIP = "Від 5 до 100 %. Сповіщення приходить, коли заряд падає до цього значення або нижче."
+
 # ----- language switching ---------------------------------------------------------
 def _text_names() -> list[str]:
     return [n for n in globals() if n.isupper() and not n.startswith("_") and n != "LANGUAGES"]

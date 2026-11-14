@@ -196,3 +196,34 @@ PICK_CAPTURE_ONLY = (
     "Record diagnostics (menu → “Record diagnostics…”) and share the file so "
     "we can add full support."
 )
+
+# Notifications
+NOTIFY_LOW_SOC = "Low battery: {soc}%"
+NOTIFY_FULL = "Battery fully charged"
+NOTIFY_ALARM = "BMS alarm: {names}"
+NOTIFY_LOST = "No connection to the BMS for over a minute"
+NOTIFY_LABEL = "Windows notifications"
+NOTIFY_NOTE = "Low charge, new alarms, connection lost for a minute, fully charged"
+LOW_SOC_LABEL = "Low charge threshold"
+
+# Energy counters (dashboard)
+ROW_ENERGY_TODAY = "Energy today:"
+ROW_ENERGY_WEEK = "Energy, 7 days:"
+ENERGY_TIP = ("Charged / discharged, kWh. Calculated from the history, so time when "
+              "the app was not running is not counted.")
+
+# Cells tab (dashboard)
+TAB_CHART = "Chart"
+TAB_CELLS = "Cells"
+CELLS_SUMMARY = "Δ {delta:.0f} mV · average {avg:.3f} V · min #{imin} · max #{imax}"
+CELLS_NO_DATA = "No data from the BMS"
+CELLS_BALANCING = "Balancing"
+
+# CSV export
+MENU_EXPORT_CSV = "Export history (CSV)…"
+EXPORT_TITLE = "Export history"
+EXPORT_DONE = "History saved: {path} ({n} rows)"
+EXPORT_EMPTY = "The history is empty, nothing to export."
+
+SECTION_DATA = "DATA"
+LOW_SOC_TIP = "5 to 100 %. The notification comes when the charge drops to this value or below."

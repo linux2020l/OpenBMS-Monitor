@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QRadioButton,
+    QSpinBox,
     QVBoxLayout,
 )
 
@@ -52,6 +53,9 @@ class SettingsDialog(QDialog):
     autostart_changed = Signal(bool)
     open_folder = Signal()
     diagnostics_requested = Signal()
+    export_requested = Signal()
+    notify_changed = Signal(bool)
+    low_soc_changed = Signal(int)
 
     def __init__(self, settings: Settings, autostart_on: bool, autostart_available: bool,
                  replay: bool = False, parent=None) -> None:
@@ -173,6 +177,27 @@ class SettingsDialog(QDialog):
         row.addWidget(self.threshold)
         lay.addLayout(row)
         lay.addWidget(_note(strings.IDLE_NOTE))
+
+        self.notify = QCheckBox(strings.NOTIFY_LABEL)
+        self.notify.setChecked(settings.notify_enabled)
+        self.notify.toggled.connect(self.notify_changed)
+        lay.addWidget(self.notify)
+        lay.addWidget(_note(strings.NOTIFY_NOTE))
+        low_row = QHBoxLayout()
+        low_label = QLabel(strings.LOW_SOC_LABEL)
+        low_label.setToolTip(strings.LOW_SOC_TIP)
+        low_row.addWidget(low_label, 1)
+        self.low_soc = QSpinBox()
+        self.low_soc.setRange(5, 100)
+        self.low_soc.setToolTip(strings.LOW_SOC_TIP)
+        self.low_soc.setSuffix(" %")
+        self.low_soc.setMinimumWidth(90)  # see the threshold spin box note above
+        self.low_soc.setValue(settings.low_soc_threshold)
+        self.low_soc.setEnabled(settings.notify_enabled)
+        self.notify.toggled.connect(self.low_soc.setEnabled)
+        self.low_soc.valueChanged.connect(self.low_soc_changed)
+        low_row.addWidget(self.low_soc)
+        lay.addLayout(low_row)
         lay.addWidget(QFrame(objectName="line"))
 
         # --- System -----------------------------------------------------------
@@ -189,12 +214,20 @@ class SettingsDialog(QDialog):
         folder = QPushButton(strings.MENU_SETTINGS_FOLDER)
         folder.setProperty("secondary", True)
         folder.clicked.connect(self.open_folder)
+        lay.addWidget(folder, 0, Qt.AlignLeft)
+        lay.addWidget(QFrame(objectName="line"))
+
+        # --- Data (also in the right-click menu, which is easy to miss) -------
+        lay.addWidget(_section(strings.SECTION_DATA))
+        export = QPushButton(strings.MENU_EXPORT_CSV)
+        export.setProperty("secondary", True)
+        export.clicked.connect(self.export_requested)
         diag = QPushButton(strings.MENU_DIAGNOSTICS)
         diag.setProperty("secondary", True)
         diag.setEnabled(not replay)
         diag.clicked.connect(self.diagnostics_requested)
         tools = QHBoxLayout()
-        tools.addWidget(folder)
+        tools.addWidget(export)
         tools.addWidget(diag)
         tools.addStretch(1)
         lay.addLayout(tools)

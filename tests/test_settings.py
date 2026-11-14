@@ -58,3 +58,11 @@ def test_history_ignores_bad_json():
     h.load_json("garbage", now=0)
     h.load_json('{"points": [[1, 2]]}', now=0)
     assert h.series(3600, 0) == []
+
+
+def test_notification_settings_are_sanitized(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"low_soc_threshold": 300, "notify_enabled": 0}), encoding="utf-8")
+    s = Settings.load(path)
+    assert s.low_soc_threshold == 100 and s.notify_enabled is False
+    assert Settings().low_soc_threshold == 20 and Settings().notify_enabled is True

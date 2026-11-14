@@ -121,6 +121,57 @@ class HistoryPoint:
         return None if self.voltage is None else self.voltage * self.current
 
 
+def local_midnight(now: float) -> float:
+    """Unix time of today's 00:00 local time."""
+    from datetime import datetime
+
+    return datetime.fromtimestamp(now).replace(hour=0, minute=0, second=0,
+                                               microsecond=0).timestamp()
+
+
+def energy_kwh(points: list[HistoryPoint], since: float,
+               bucket_s: float = 10.0) -> tuple[float, float]:
+    """(charged, discharged) kWh in history buckets starting at or after `since`.
+
+    Each point is one bucket average, so its energy is V * I * bucket_s.
+    Gaps (app not running) simply add nothing. Old points stored without
+    voltage use the nearest known voltage (pack voltage changes slowly).
+    """
+    charged = discharged = 0.0  # Wh
+    last_v = next((p.voltage for p in points if p.voltage is not None), None)
+    for p in points:
+        if p.voltage is not None:
+            last_v = p.voltage
+        if p.time < since or last_v is None:
+            continue
+        wh = last_v * p.current * bucket_s / 3600
+        if wh > 0:
+            charged += wh
+        else:
+            discharged -= wh
+    return charged / 1000, discharged / 1000
+
+
+CSV_HEADER = "time,unix_time,soc_percent,current_a,voltage_v,power_w"
+
+
+def history_csv(points: list[HistoryPoint]) -> str:
+    """History as CSV: comma-separated, dot decimals, local ISO time.
+
+    One row per 10 s bucket; current/power positive = charging. Old points
+    stored without voltage have empty voltage/power cells.
+    """
+    from datetime import datetime
+
+    rows = [CSV_HEADER]
+    for p in points:
+        stamp = datetime.fromtimestamp(p.time).isoformat(timespec="seconds")
+        volts = "" if p.voltage is None else f"{p.voltage:.3f}"
+        watts = "" if p.power is None else f"{p.power:.1f}"
+        rows.append(f"{stamp},{p.time:.0f},{p.soc:.0f},{p.current:.3f},{volts},{watts}")
+    return "\n".join(rows) + "\n"
+
+
 class History:
     """SOC/current/voltage history in fixed buckets (default 10 s, 7 days)."""
 

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMenu, QMessageBox, QSystem
 from . import autostart, strings, win_taskbar
 from . import drivers
 from .model import CellInfo, DeviceInfo
+from .notifications import ALARM, FULL, LOST, LOW_SOC, Notifier
 from .settings import Settings, app_dir
 from .sources import BleSource, DataSource, ReplaySource
 from .history_store import RETENTION_S, HistoryStore
@@ -85,6 +86,7 @@ class Controller(QObject):
             {"variant": settings.variant} if settings.variant else {})
         self.source: DataSource | None = None
         self.tracker = StateTracker(settings.idle_threshold)
+        self.notifier = Notifier(settings.low_soc_threshold)
         self.history = History(on_bucket_closed=self._store_point)
         self._open_store()
         self._load_history()
@@ -223,6 +225,9 @@ class Controller(QObject):
 
     def render(self) -> None:
         snap = self.snapshot()
+        if self.settings.notify_enabled and not self.replay:
+            for event in self.notifier.update(snap, time.monotonic()):
+                self._toast(event, snap)
         self.compact.update_view(snap)
         self.strip.update_view(snap)
         if self.dashboard.isVisible():
@@ -377,6 +382,7 @@ class Controller(QObject):
         add(strings.MENU_DISCONNECT if running else strings.MENU_CONNECT, self.toggle_connection)
         add(strings.MENU_PICK_BMS, self.pick_bms, enabled=not self.replay)
         add(strings.MENU_DIAGNOSTICS, self.open_diagnostics, enabled=not self.replay)
+        add(strings.MENU_EXPORT_CSV, self.export_csv)
 
         scales = QMenu(strings.MENU_SCALE, m)
         sgroup = QActionGroup(scales)
@@ -414,6 +420,9 @@ class Controller(QObject):
         dlg.autostart_changed.connect(self.set_autostart)
         dlg.open_folder.connect(self.open_data_folder)
         dlg.diagnostics_requested.connect(self.open_diagnostics)
+        dlg.export_requested.connect(self.export_csv)
+        dlg.notify_changed.connect(self.set_notify)
+        dlg.low_soc_changed.connect(self.set_low_soc)
         before = (self.settings.ui_scale, self.settings.language)
         dlg.exec()
         # Scale and language need new windows: restart once, when the user is
@@ -491,6 +500,7 @@ class Controller(QObject):
                 self.history.clear()
                 self.cell = None
                 self.tracker = StateTracker(self.settings.idle_threshold)
+                self.notifier = Notifier(self.settings.low_soc_threshold)
             self.settings.address, self.settings.bms_name = r.address, r.name
             # Unknown device picked via "show all": try the default driver.
             self.settings.driver = drivers.get(r.driver_id).id
@@ -503,6 +513,35 @@ class Controller(QObject):
         elif self.source is not None and was_running:
             self.source.start()
         self.render()
+
+    def export_csv(self) -> None:
+        """Save the current BMS's history (up to 7 days, 10 s rows) as CSV."""
+        from datetime import datetime
+
+        from PySide6.QtCore import QStandardPaths
+        from PySide6.QtWidgets import QFileDialog
+
+        from .state import history_csv
+
+        points = self.history.series(self.history.max_age_s, time.time())
+        if not points:
+            self._notify(strings.EXPORT_EMPTY)
+            return
+        docs = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation) or str(Path.home())
+        name = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in (self.device_name or "bms"))
+        default = Path(docs) / "JK BMS Monitor" / f"history-{name}-{datetime.now():%Y%m%d-%H%M}.csv"
+        default.parent.mkdir(parents=True, exist_ok=True)
+        path, _ = QFileDialog.getSaveFileName(None, strings.EXPORT_TITLE, str(default), "CSV (*.csv)")
+        if not path:
+            return
+        try:
+            Path(path).write_text(history_csv(points), encoding="utf-8")
+        except OSError as exc:
+            log.exception("CSV export failed")
+            self._notify(str(exc))
+            return
+        log.info("history exported: %s (%d rows)", path, len(points))
+        self._notify(strings.EXPORT_DONE.format(path=path, n=len(points)))
 
     def open_diagnostics(self) -> None:
         """Record a shareable capture of any BMS (community support for new brands)."""
@@ -537,6 +576,33 @@ class Controller(QObject):
 
     def toggle_autostart(self) -> None:
         self.set_autostart(not autostart.is_enabled())
+
+    def set_notify(self, enabled: bool) -> None:
+        self.settings.notify_enabled = enabled
+        self.save_settings()
+
+    def set_low_soc(self, percent: int) -> None:
+        self.settings.low_soc_threshold = percent
+        self.notifier.low_soc = percent
+        self.save_settings()
+
+    def _toast(self, event, snap: Snapshot) -> None:
+        """Windows notification (tray balloon). Never a modal box: it must not
+        block the app while nobody is at the PC."""
+        if event.kind == LOW_SOC:
+            text = strings.NOTIFY_LOW_SOC.format(soc=event.soc)
+        elif event.kind == FULL:
+            text = strings.NOTIFY_FULL
+        elif event.kind == ALARM:
+            text = strings.NOTIFY_ALARM.format(names=", ".join(strings.alarm_text(a) for a in event.alarms))
+        elif event.kind == LOST:
+            text = strings.NOTIFY_LOST
+        else:
+            return
+        log.info("notification %s: %s", event.kind, text)
+        if self.tray is not None:
+            icon = QSystemTrayIcon.Information if event.kind == FULL else QSystemTrayIcon.Warning
+            self.tray.showMessage(snap.device_name or strings.APP_TITLE, text, icon, 10000)
 
     def _notify(self, text: str) -> None:
         if self.tray is not None:

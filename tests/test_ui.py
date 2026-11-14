@@ -312,3 +312,36 @@ def test_scale_change_restarts_and_same_scale_does_not(app, monkeypatch):
     ctl.set_scale(1.25)
     assert ctl.restart_pending and quits == [1]
     assert ctl.settings.ui_scale == 1.25
+
+
+def test_dashboard_cells_tab_and_energy_rows(app, cells):
+    ctl, src = make_controller(display_mode=MODE_WIDGET)
+    src.status.emit("replay", "fixture")
+    for c in cells:
+        src.cell_info.emit(c)
+    ctl.expand()
+    d = ctl.dashboard
+    d.refresh_chart(force=True)
+    texts = [lbl.text() for lbl in d.energy_rows.values()]
+    assert all("kWh" in t for t in texts)
+    assert d.pages.currentWidget() is d.chart and d.chart_controls.isVisibleTo(d)
+    d._set_tab(1)
+    assert d.pages.currentWidget() is d.cells and not d.chart_controls.isVisibleTo(d)
+    assert d.cells.cell is not None and len(d.cells.cell.cell_voltages) == 4
+    d.cells.grab()  # paints without errors
+    d._set_tab(0)
+
+
+def test_notifications_go_through_the_controller(app, cells, monkeypatch):
+    import dataclasses
+
+    ctl, src = make_controller(display_mode=MODE_WIDGET, low_soc_threshold=20)
+    shown = []
+    monkeypatch.setattr(ctl, "_toast", lambda event, snap: shown.append(event.kind))
+    src.status.emit("connected", "AA:BB")
+    src.cell_info.emit(dataclasses.replace(cells[0], soc=15))
+    assert shown == ["low_soc"]
+    ctl.settings.notify_enabled = False
+    ctl.notifier.low_soc = 50  # would fire again if enabled
+    src.cell_info.emit(dataclasses.replace(cells[0], soc=40))
+    assert shown == ["low_soc"]

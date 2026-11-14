@@ -41,6 +41,8 @@ class Settings:
     fullscreen_behavior: str = "hide"  # strip during full-screen apps: "hide" / "corner"
     dim_when_maximized: bool = True  # widget/strip see-through + click-through then
     language: str = "auto"  # "auto" (Windows display language), "uk" or "en"
+    notify_enabled: bool = True  # Windows notifications (low SOC, alarms, lost, full)
+    low_soc_threshold: int = 20  # %, "low battery" notification
     extra: dict = field(default_factory=dict)  # forward compatibility
 
     @classmethod
@@ -75,6 +77,11 @@ class Settings:
             self.driver = drivers.DEFAULT_DRIVER.id
         if self.display_mode not in ("widget", "taskbar"):
             self.display_mode = "taskbar"
+        try:
+            self.low_soc_threshold = min(max(int(self.low_soc_threshold), 5), 100)
+        except (TypeError, ValueError):
+            self.low_soc_threshold = 20
+        self.notify_enabled = bool(self.notify_enabled)
         if self.language not in ("auto", "uk", "en"):
             self.language = "auto"
         if self.fullscreen_behavior not in ("hide", "corner"):
