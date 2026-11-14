@@ -1,0 +1,10 @@
+[project]
+name = "jkbms-widget"
+version = "0.1.0"
+description = "Read-only Windows desktop widget for JK BMS over Bluetooth Low Energy"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+# Lets tests import the `jkbms_widget` package without installing it.
+pythonpath = ["."]
+testpaths = ["tests"]

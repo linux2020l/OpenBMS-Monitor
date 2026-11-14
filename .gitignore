@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# PyInstaller (build.ps1 regenerates the icon too)
+build/
+dist/
+*.spec
+assets/icon.ico
+
+# Runtime output (raw BLE dumps, logs). Curated test fixtures live in tests/fixtures/.
+logs/
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.lnk
+
+# Local-only reference image (another app's UI, not ours to publish)
+docs/ui-mockup.png
