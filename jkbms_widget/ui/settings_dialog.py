@@ -63,6 +63,11 @@ class SettingsDialog(QDialog):
     change_requested = Signal(int)  # index in the BMS list
     remove_requested = Signal(int)
     visibility_changed = Signal(int, bool)  # eye toggle: show this BMS's strip / widget
+    bank_add_requested = Signal()
+    bank_edit_requested = Signal(int)  # index in the bank list
+    bank_remove_requested = Signal(int)
+    bank_visibility_changed = Signal(int, bool)
+    desktop_changed = Signal(bool)  # floating widgets pinned to the desktop
     mode_changed = Signal(str)  # "widget" / "taskbar"
     scale_changed = Signal(float)
     language_changed = Signal(str)  # "auto" / "uk" / "en"
@@ -78,7 +83,7 @@ class SettingsDialog(QDialog):
 
     def __init__(self, settings: Settings, autostart_on: bool, autostart_available: bool,
                  replay: bool = False, devices: list[tuple[str, str, bool]] | None = None,
-                 parent=None) -> None:
+                 parent=None, banks: list[tuple[str, str, str, bool]] | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(strings.SETTINGS_TITLE)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
@@ -134,6 +139,29 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(page, strings.SETTINGS_TAB_BMS)
         self.set_devices(devices or [])
 
+        # --- Banks (several BMS in parallel = one battery) ------------------------
+        page, p = _page()
+        self.banks = QListWidget()
+        self.banks.setMinimumHeight(150)
+        self.banks.itemSelectionChanged.connect(self._update_bank_buttons)
+        p.addWidget(self.banks, 1)
+        row = QHBoxLayout()
+        self.bank_add_btn = QPushButton(strings.BANK_CREATE)
+        self.bank_edit_btn = QPushButton(strings.BMS_CHANGE)
+        self.bank_remove_btn = QPushButton(strings.BANK_REMOVE)
+        for b in (self.bank_add_btn, self.bank_edit_btn, self.bank_remove_btn):
+            b.setProperty("secondary", True)
+            row.addWidget(b)
+        row.addStretch(1)
+        self.bank_add_btn.clicked.connect(self.bank_add_requested)
+        self.bank_edit_btn.clicked.connect(lambda: self.bank_edit_requested.emit(self._bank_row()))
+        self.bank_remove_btn.clicked.connect(
+            lambda: self.bank_remove_requested.emit(self._bank_row()))
+        p.addLayout(row)
+        p.addWidget(_note(strings.BANKS_NOTE))
+        self.tabs.addTab(page, strings.SETTINGS_TAB_BANKS)
+        self.set_banks(banks or [])
+
         # --- Display ------------------------------------------------------------
         page, p = _page()
         self.mode_group = QButtonGroup(self)
@@ -176,6 +204,11 @@ class SettingsDialog(QDialog):
         grid.addWidget(self.language, 2, 1, Qt.AlignRight)
         p.addLayout(grid)
         p.addWidget(_note(strings.SCALE_NOTE))
+        self.desktop = QCheckBox(strings.DESKTOP_LABEL)
+        self.desktop.setChecked(settings.widgets_on_desktop)
+        self.desktop.toggled.connect(self.desktop_changed)
+        p.addWidget(self.desktop)
+        p.addWidget(_note(strings.DESKTOP_NOTE))
         self.dim = QCheckBox(strings.DIM_LABEL)
         self.dim.setChecked(settings.dim_when_maximized)
         self.dim.toggled.connect(self.dim_changed)
@@ -305,6 +338,56 @@ class SettingsDialog(QDialog):
             self.devices.setCurrentRow(row)
         self._count = len(devices)
         self._update_buttons()
+
+    # ----- bank list ------------------------------------------------------------
+    def set_banks(self, banks: list[tuple[str, str, str, bool]]) -> None:
+        """(letter, name, members text, visible) per bank."""
+        row = self._bank_row()
+        self.banks.clear()
+        for i, (label, name, detail, visible) in enumerate(banks):
+            item = QListWidgetItem()
+            self.banks.addItem(item)
+            line = QWidget()
+            h = QHBoxLayout(line)
+            h.setContentsMargins(8, 6, 6, 6)
+            text = QLabel(f"{label}. {name}\n{detail}")
+            text.setAttribute(Qt.WA_TransparentForMouseEvents)
+            h.addWidget(text, 1)
+            eye = QToolButton()
+            eye.setIconSize(QSize(22, 22))
+            eye.setFixedSize(34, 34)
+            eye.setCheckable(True)
+            eye.setChecked(visible)
+            eye.setToolTip(strings.TIP_EYE_BANK)
+            eye.setIcon(icons.icon("eye" if visible else "eye_off",
+                                   theme.TEXT if visible else theme.MUTED, 20))
+            eye.setEnabled(not self.replay)
+            eye.toggled.connect(lambda on, i=i, b=eye: self._bank_eye(i, on, b))
+            h.addWidget(eye)
+            line.setMinimumHeight(54)
+            item.setSizeHint(QSize(0, 62))
+            self.banks.setItemWidget(item, line)
+        if not banks:
+            self.banks.addItem(QListWidgetItem(strings.BANKS_EMPTY))
+            self.banks.item(0).setFlags(Qt.NoItemFlags)
+        elif 0 <= row < len(banks):
+            self.banks.setCurrentRow(row)
+        self._bank_count = len(banks)
+        self._update_bank_buttons()
+
+    def _bank_eye(self, index: int, on: bool, button: QToolButton) -> None:
+        button.setIcon(icons.icon("eye" if on else "eye_off", theme.TEXT if on else theme.MUTED, 20))
+        self.bank_visibility_changed.emit(index, on)
+
+    def _bank_row(self) -> int:
+        items = self.banks.selectedItems() if hasattr(self, "banks") else []
+        return self.banks.row(items[0]) if items else -1
+
+    def _update_bank_buttons(self) -> None:
+        selected = self._bank_row() >= 0 and self._bank_count > 0
+        self.bank_add_btn.setEnabled(not self.replay)
+        self.bank_edit_btn.setEnabled(selected and not self.replay)
+        self.bank_remove_btn.setEnabled(selected and not self.replay)
 
     def _eye(self, index: int, on: bool, button: QToolButton) -> None:
         button.setIcon(icons.icon("eye" if on else "eye_off", theme.TEXT if on else theme.MUTED, 20))

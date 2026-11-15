@@ -22,6 +22,14 @@ def test_soc_line_uses_lighter_pastel_of_the_current_colour(current, soc_color, 
     assert soc.hsvSaturation() < line.hsvSaturation() or current == 0.0
 
 
+def test_chart_idle_follows_the_threshold():
+    # A bank's summed current is rarely exactly 0: +0.4 A is still idle at 1 A.
+    assert chart._direction_color(0.4, 1.0) == chart.ZERO_COLOR
+    assert chart._soc_color(-0.9, 1.0) == chart.SOC_IDLE_COLOR
+    assert chart._direction_color(1.0, 1.0) == chart.CHARGE_COLOR
+    assert chart._soc_color(-1.2, 1.0) == chart.SOC_DISCHARGE_COLOR
+
+
 @pytest.mark.parametrize(
     "max_abs_current, limit",
     [(0.0, 10), (0.6, 10), (10.0, 10), (10.1, 20), (57.1, 60), (99.9, 100), (123.0, 130), (250.0, 250)],

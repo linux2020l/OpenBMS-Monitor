@@ -425,14 +425,14 @@ def test_hidden_bms_keeps_recording_and_strips_are_numbered(app, cells):
         m.set_source(s)
         s.status.emit("replay", "x")
     ctl.apply_display_mode()
-    assert [m.strip.number for m in ctl.monitors] == [1, 2, 3]
+    assert [m.strip.number for m in ctl.monitors] == ["1", "2", "3"]
     assert [m.compact.number.text() for m in ctl.monitors] == ["1", "2", "3"]
 
     ctl.set_visible(1, False)  # the eye in the settings list / "Hide from the taskbar"
     first, second, third = ctl.monitors
     assert not second.strip.wanted and first.strip.wanted and third.strip.wanted
     assert (first.strip.slot, third.strip.slot) == (0, 1)  # no gap for the hidden one
-    assert third.strip.number == 3  # numbers stay those of the list
+    assert third.strip.number == "3"  # numbers stay those of the list
     assert settings.devices()[1].visible is False
     sources[1].cell_info.emit(dataclasses.replace(cells[0], soc=42))
     assert second.cell.soc == 42  # hidden, but still connected and recording
@@ -517,3 +517,209 @@ def test_low_soc_threshold_colours_views_and_balancing_row(app, cells):
     assert ctl.dashboard.rows[strings.ROW_BALANCING].text() == strings.BALANCING_ACTIVE
     ctl.set_low_soc(50)
     assert not ctl.snapshot().is_low and theme.RED not in ctl.compact.soc.text()
+
+
+def make_bank(app, cells, **settings):
+    """Controller with two BMS in a bank plus one on its own."""
+    s = Settings(address="AA:01", bms_name="Left",
+                 extra_devices=[{"address": "AA:02", "name": "Right"},
+                                {"address": "AA:03", "name": "E-Bike"}], **settings)
+    ctl = Controller(s)
+    sources = [FakeSource() for _ in ctl.monitors]
+    for m, src in zip(ctl.monitors, sources):
+        m.set_source(src)
+    bank = ctl.apply_bank(None, "Home", ["AA:01", "AA:02"])
+    return ctl, sources, bank
+
+
+def test_bank_is_one_battery_with_its_own_strip(app, cells):
+    import dataclasses
+
+    ctl, sources, bank = make_bank(app, cells, display_mode=MODE_TASKBAR)
+    assert ctl.views == [bank, *ctl.monitors]
+    assert [v.strip.number for v in ctl.views] == ["A", "1", "2", "3"]
+    # Owner's choice: one strip per bank, the members' own strips are hidden.
+    assert [m.visible for m in ctl.monitors] == [False, False, True]
+    assert ctl.bank_of(ctl.monitors[0]) is bank and ctl.bank_of(ctl.monitors[2]) is None
+    for src in sources:
+        src.status.emit("replay", "x")
+    sources[0].cell_info.emit(dataclasses.replace(cells[0], current=-10.0))
+    sources[1].cell_info.emit(dataclasses.replace(cells[0], current=-5.0))
+    snap = bank.snapshot()
+    assert not snap.stale and not snap.partial
+    assert snap.cell.current == -15.0 and snap.members == 2
+    assert snap.device_name == "Home"
+    assert bank.history.open_bucket() is not None  # the bank records its own history
+    assert bank.history_key == f"bank:{bank.config.id}"
+    sel = ctl.dashboard.selector
+    sel._fill()
+    names = [a.defaultWidget().findChild(QPushButton).text() for a in sel.menu_.actions()]
+    assert names[0] == "A. Home" and names[1] == "1. Left"
+    assert strings.BANK_MEMBER_OF.format(label="A") in ctl.device_rows()[0][1]
+    ctl.shutdown()
+
+
+def test_bank_warns_when_a_member_is_offline(app, cells):
+    ctl, sources, bank = make_bank(app, cells, display_mode=MODE_WIDGET)
+    sources[0].status.emit("replay", "x")
+    sources[0].cell_info.emit(cells[0])
+    sources[1].status.emit("lost", "timeout")
+    snap = bank.snapshot()
+    assert snap.partial and snap.offline == ("Right",)
+    text = strings.BANK_PARTIAL.format(n=1, total=2)
+    ctl.render()
+    assert bank.compact.status.text() == strings.BANK_PARTIAL_SHORT.format(n=1, total=2)
+    assert text in bank.strip.icon_tooltip()
+    ctl.expand(bank)
+    assert ctl.mon is bank and ctl.dashboard.status_text.text() == text
+    ctl.shutdown()
+
+
+def test_bank_notifies_low_soc_once_and_members_only_alarms(app, cells):
+    import dataclasses
+
+    ctl, sources, bank = make_bank(app, cells, low_soc_threshold=30)
+    events = []
+    ctl._toast = lambda event, snap: events.append((snap.device_name, event.kind))
+    low = dataclasses.replace(cells[0], soc=20, remaining_capacity=60.0, nominal_capacity=300.0)
+    for src in sources[:2]:
+        src.status.emit("replay", "x")
+        src.cell_info.emit(low)
+    ctl.render()
+    assert ("Home", "low_soc") in events
+    assert ("Left", "low_soc") not in events and ("Right", "low_soc") not in events
+    ctl.shutdown()
+
+
+def test_ungrouping_and_removing_members_restore_strips(app, cells):
+    ctl, sources, bank = make_bank(app, cells)
+    ctl.remove_bank(0)
+    assert ctl.banks == [] and all(m.visible for m in ctl.monitors)
+    bank = ctl.apply_bank(None, "Home", ["AA:01", "AA:02"])
+    ctl.remove_bms(1)  # one BMS left in the bank: the bank is gone
+    assert ctl.banks == [] and ctl.monitors[0].visible
+    ctl.shutdown()
+
+
+def test_settings_dialog_lists_banks(app, cells):
+    from jkbms_widget.ui.settings_dialog import SettingsDialog
+
+    ctl, sources, bank = make_bank(app, cells)
+    dlg = SettingsDialog(ctl.settings, False, False, devices=ctl.device_rows(),
+                         banks=ctl.bank_rows())
+    assert dlg.banks.count() == 1
+    flips = []
+    dlg.bank_visibility_changed.connect(lambda i, on: flips.append((i, on)))
+    dlg.banks.itemWidget(dlg.banks.item(0)).findChild(QToolButton).click()
+    assert flips == [(0, False)]
+    ctl.set_view_visible(0, False)
+    assert bank.visible is False and ctl.settings.banks[0]["visible"] is False
+    ctl.shutdown()
+
+
+def test_widgets_can_be_pinned_to_the_desktop(app):
+    from PySide6.QtCore import Qt
+
+    ctl, src = make_controller(display_mode=MODE_WIDGET)
+    ctl.apply_display_mode()
+    assert ctl.compact.windowFlags() & Qt.WindowStaysOnTopHint
+    ctl.set_widgets_on_desktop(True)
+    assert not ctl.compact.windowFlags() & Qt.WindowStaysOnTopHint
+    assert ctl.compact.isVisible() and ctl.compact.on_desktop
+    ctl.set_widgets_on_desktop(False)
+    assert ctl.compact.windowFlags() & Qt.WindowStaysOnTopHint
+    ctl.shutdown()
+
+
+def test_bank_cells_per_pack_and_flow_between_packs(app, cells):
+    import dataclasses
+
+    ctl, sources, bank = make_bank(app, cells)
+    for src in sources[:2]:
+        src.status.emit("replay", "x")
+    sources[0].cell_info.emit(dataclasses.replace(cells[0], current=5.0))
+    sources[1].cell_info.emit(dataclasses.replace(cells[0], current=-5.0))
+    ctl.expand(bank)
+    snap = bank.snapshot()
+    assert snap.cell.current == 0.0 and [n for n, _ in snap.packs] == ["Left", "Right"]
+    groups = ctl.dashboard.cells.groups()
+    assert [len(c.cell_voltages) for _, c in groups] == [4, 4]  # 1234 1234, not 1..8
+    assert ctl.dashboard.exchange.isVisibleTo(ctl.dashboard)
+    assert ctl.dashboard.exchange.text().startswith("5.0 A")
+    ctl.dashboard.cells.resize(700, 220)
+    ctl.dashboard.cells.grab()  # paints both groups without errors
+    ctl.expand(ctl.monitors[2])  # a single BMS: no flow row
+    assert not ctl.dashboard.exchange.isVisibleTo(ctl.dashboard)
+    assert not hasattr(ctl.dashboard, "status_dot") and not hasattr(ctl.compact, "dot")
+    ctl.shutdown()
+
+
+def test_series_bank_with_letter_and_no_data_after_grace(app, cells):
+    import dataclasses
+    import time
+
+    from jkbms_widget import app as app_mod
+
+    ctl, sources, parallel = make_bank(app, cells)
+    ctl.remove_bank(0)
+    bank = ctl.apply_bank(None, "", ["AA:01", "AA:02"], letter="D", kind="series")
+    assert ctl.label(bank) == "D" and bank.device_name == strings.BANK_DEFAULT_NAME.format(label="D")
+    for src in sources[:2]:
+        src.status.emit("replay", "x")
+    sources[0].cell_info.emit(dataclasses.replace(cells[0], soc=80))
+    sources[1].cell_info.emit(dataclasses.replace(cells[0], soc=40))
+    snap = bank.snapshot()
+    assert snap.series and not snap.stale and snap.cell.soc == 40
+    assert abs(snap.cell.pack_voltage - 2 * cells[0].pack_voltage) < 1e-6
+    ctl.expand(bank)
+    assert [len(c.cell_voltages) for _, c in ctl.dashboard.cells.groups()] == [4, 4]
+    assert ctl.dashboard.cells.continuous  # series: numbered 1..8
+    assert not ctl.dashboard.exchange.isVisibleTo(ctl.dashboard)  # one common current
+    # One pack goes silent: its last voltage still counts, with a warning ...
+    sources[1].status.emit("lost", "timeout")
+    snap = bank.snapshot()
+    assert snap.partial and strings.partial_note(snap) == strings.BANK_SERIES_PARTIAL_SUB.format(
+        names="Right")
+    assert abs(snap.cell.pack_voltage - 2 * cells[0].pack_voltage) < 1e-6
+    # ... until the grace time is over: then the bank has no data.
+    ctl.monitors[1].last_cell_at = time.monotonic() - app_mod.SERIES_GRACE_S - 1
+    snap = bank.snapshot()
+    assert snap.stale and snap.missing == ("Right",)
+    ctl.render()
+    assert ctl.dashboard.health_title.text() == strings.BANK_NO_DATA
+    assert ctl.settings.banks[0]["kind"] == "series" and ctl.settings.banks[0]["letter"] == "D"
+    ctl.shutdown()
+
+
+def test_banks_are_ordered_by_their_letters(app):
+    s = Settings(address="AA:01", extra_devices=[{"address": f"AA:0{i}"} for i in (2, 3, 4)])
+    ctl = Controller(s)
+    c = ctl.apply_bank(None, "Cee", ["AA:01", "AA:02"], letter="C")
+    b = ctl.apply_bank(None, "Bee", ["AA:03", "AA:04"], letter="B")
+    assert ctl.banks == [b, c]  # like drives: B before C, B next to the tray
+    assert [v.strip.number for v in ctl.views] == ["B", "C", "1", "2", "3", "4"]
+    dup = ctl.apply_bank(c, "Cee", ["AA:01", "AA:02"], letter="B")  # taken: keeps its own
+    assert ctl.label(dup) == "C"
+    ctl.shutdown()
+
+
+def test_bank_editor_offers_free_letters_and_kinds(app):
+    from jkbms_widget.ui.bank_dialog import BankDialog
+
+    dlg = BankDialog("", [("AA:01", "1. Left", True), ("AA:02", "2. Right", True)],
+                     letter="B", taken=["A", "C"], kind="series")
+    letters = [dlg.letter_box.itemData(i) for i in range(dlg.letter_box.count())]
+    assert "A" not in letters and "C" not in letters and dlg.letter() == "B"
+    assert dlg.kind() == "series" and dlg.ok.isEnabled()
+    assert dlg.name_edit.placeholderText() == strings.BANK_DEFAULT_NAME.format(label="B")
+    dlg.kind_buttons["parallel"].setChecked(True)
+    assert dlg.kind() == "parallel"
+    assert dlg.kind_note.text() == strings.BANK_KIND_TIPS["parallel"]
+
+
+def test_chart_uses_the_idle_threshold_from_settings(app):
+    ctl, src = make_controller(idle_threshold=1.5)
+    assert ctl.dashboard.chart.idle_threshold == 1.5
+    ctl.set_idle_threshold(0.8)
+    assert ctl.dashboard.chart.idle_threshold == 0.8
+    ctl.shutdown()

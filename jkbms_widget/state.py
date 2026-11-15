@@ -85,6 +85,19 @@ class Snapshot:
     status_detail: str = ""
     device_name: str = ""  # BLE name from the device-info frame
     low_soc: int = 19  # user's low-charge threshold, % (red SOC at or below it)
+    members: int = 0  # bank: number of BMS in it (0 = a single BMS)
+    offline: tuple[str, ...] = ()  # bank: names of members left out (no fresh data)
+    # Bank: (name, reading) of every member in the sums, for per-pack cells and
+    # the current flowing between packs. Empty for a single BMS.
+    packs: tuple[tuple[str, CellInfo], ...] = ()
+    series: bool = False  # bank in series (else parallel)
+    # Series bank: members without data for too long; the bank then shows no data.
+    missing: tuple[str, ...] = ()
+
+    @property
+    def partial(self) -> bool:
+        """A bank shows live data, but some of its BMS are not in the sums."""
+        return bool(self.offline) and not self.stale
 
     @property
     def is_low(self) -> bool:

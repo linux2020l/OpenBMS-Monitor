@@ -30,9 +30,23 @@ settings).*
   charging, red badge on faults), SOC, voltage, current, power and time to
   full/empty, placed next to the system tray. Drag it along the taskbar.
   During full-screen apps it hides or moves to the screen corner.
-- **Floating widget**: small always-on-top frameless window, drag anywhere.
+- **Floating widget**: small frameless window, drag anywhere. Always on top
+  by default, or pinned to the desktop (under other windows, still visible
+  after *Show desktop*).
 - **Several BMS at once**: add more BMS in *Settings → BMS*; each gets its
   own taskbar strip (side by side) or widget, the dashboard has a selector.
+- **Banks**: group BMS in *Settings → Banks* and show them as one battery
+  with its own strip, chart and energy counters. Each bank gets a letter
+  you pick, like a drive letter.
+  - *Parallel*: total current and power, capacity-weighted SOC, a "flow
+    between packs" row when one pack charges another (it cancels in the
+    total). A BMS without data is left out of the sums, with a warning.
+  - *Series*: voltages add up, common current, SOC and time left follow the
+    weakest pack. A BMS without data counts with its last voltage for a
+    minute, then the bank reports "no data".
+  - Cells tab: one group per pack with its own spread (parallel 1234 1234,
+    series 1234 5678 plus the spread of all cells).
+  - Low charge / full notifications come from the bank, alarms from each BMS.
 - **Dashboard**: SOC ring, current, power, voltage, temperature, cell
   voltage range, balancing, MOSFET state, health summary.
 - **History chart**: SOC and current for 1 h / 6 h / 24 h / 7 days, stored
@@ -115,9 +129,10 @@ without pairing.
 - Left click on the strip/widget opens the dashboard; the ⚙ button opens
   settings; right click (or the tray icon) opens the menu: connect /
   disconnect, choose BMS, display mode, settings, exit.
-- Settings: BMS, display mode (taskbar / floating widget), behaviour during
-  full-screen apps, scale, language, fading over maximized windows, idle
-  threshold, start with Windows (installed app only).
+- Settings: BMS, banks, display mode (taskbar / floating widget), widgets
+  on the desktop, behaviour during full-screen apps, scale, language, fading
+  over maximized windows, idle threshold, notifications, start with Windows
+  (installed app only).
 - Settings, chart history and a log are stored in `%APPDATA%\JkBmsWidget\`
   (`settings.json`, `history.sqlite`, `widget.log`). Delete the folder to
   reset everything.
@@ -193,6 +208,7 @@ jkbms_widget/
   ble.py             bleak: scan, characteristic selection, the only write path
   dump.py            live logger with decoded console output
   state.py           state with hysteresis, time left, history buffer
+  bank.py            parallel banks: combined reading of several packs
   history_store.py   7-day per-BMS history (SQLite)
   settings.py        settings.json
   strings.py         all user-visible text (Ukrainian) + language switching
@@ -222,8 +238,8 @@ as the length-prefix byte on Windows notifications) are documented in
 - The taskbar strip is a topmost window placed over the taskbar (Windows 11
   has no API for taskbar widgets); vertical or auto-hiding taskbars are not
   supported.
-- Parallel banks (one combined SOC / current for several BMS) are not
-  supported yet; several BMS are shown side by side.
+- A bank trusts the connection type you choose (parallel / series); the app
+  cannot see the wiring.
 
 ## Credits
 

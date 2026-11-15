@@ -316,6 +316,54 @@ TIP_EYE = "Показувати смужку / віджет цієї BMS. Дан
 LOW_SOC_STATE = "Низький заряд (поріг {t}%)"
 BALANCING_ACTIVE = "Активне"
 
+# Parallel banks (step D2) + widgets on the desktop
+BANK_DEFAULT_NAME = "Банк {label}"
+SETTINGS_TAB_BANKS = "Банки"
+BANK_CREATE = "Створити банк…"
+BANK_REMOVE = "Розформувати"
+BANKS_NOTE = ("Банк — кілька BMS, з'єднаних паралельно. Програма показує їх як одну батарею: "
+              "сумарний струм і потужність, SOC з урахуванням ємності, спільний графік і "
+              "одна смужка на панелі. Кожну BMS банку можна відкрити окремо в головному вікні.")
+BANKS_EMPTY = "Банків ще немає"
+BANK_EDITOR_TITLE = "Банк"
+BANK_NAME_LABEL = "Назва"
+BANK_MEMBERS_LABEL = "BMS у банку (щонайменше дві)"
+BANK_EDITOR_NOTE = ("BMS з іншого банку тут не показано. Смужки BMS банку ховаються; "
+                    "їх можна повернути оком у списку BMS.")
+BANK_SAVE = "Зберегти"
+BANK_NEED_TWO = "Для банку потрібні щонайменше дві BMS, що ще не входять в інший банк."
+BANK_MEMBERS_DETAIL = "{n} BMS: {names}"
+BANK_MEMBER_OF = "у банку {label}"
+MENU_REMOVE_BANK = "Розформувати банк"
+BANK_PARTIAL = "{n} з {total} BMS без зв'язку"
+BANK_PARTIAL_SHORT = "{n} з {total} без зв'язку"  # compact widget
+BANK_PARTIAL_SUB = "Не враховано: {names}"
+TIP_EYE_BANK = "Показувати смужку / віджет цього банку. Дані й графік записуються завжди."
+DESKTOP_LABEL = "Віджети на робочому столі (не поверх інших вікон)"
+DESKTOP_NOTE = ("Віджети лишаються під іншими програмами й видимі, коли згорнути все (Win+D). "
+                "Смужка на панелі завдань не змінюється.")
+ROW_EXCHANGE = "Перетік між акумами:"
+EXCHANGE_TIP = ("Струм, що йде з одного акума банку в інший. У сумі банку він взаємно "
+                "знищується: сума — це те, що йде в інвертор або від зарядки.")
+BANK_KIND_NAMES = {"parallel": "Паралельно", "series": "Послідовно"}
+BANK_KIND_LABEL = "З'єднання"
+BANK_KIND_TIPS = {
+    "parallel": "Однакова напруга, струми й ємності сумуються, SOC з урахуванням ємності.",
+    "series": "Напруги сумуються, струм спільний, SOC і час до розряду — за найслабшим акумом.",
+}
+BANK_LETTER_LABEL = "Буква"
+BANK_SERIES_PARTIAL_SUB = "Остання відома напруга: {names}"
+BANK_NO_DATA = "Немає даних від BMS банку"
+BANK_NO_DATA_SHORT = "Немає даних"
+BANK_NO_DATA_SUB = "Без зв'язку понад хвилину: {names}"
+CELLS_ALL = "Усі комірки:"
+
+def partial_note(snap) -> str:
+    """Which members of a bank are not live (parallel: left out of the sums;
+    series: counted with their last known voltage)."""
+    names = ", ".join(snap.offline)
+    return (BANK_SERIES_PARTIAL_SUB if snap.series else BANK_PARTIAL_SUB).format(names=names)
+
 # ----- language switching ---------------------------------------------------------
 def _text_names() -> list[str]:
     return [n for n in globals() if n.isupper() and not n.startswith("_") and n != "LANGUAGES"]

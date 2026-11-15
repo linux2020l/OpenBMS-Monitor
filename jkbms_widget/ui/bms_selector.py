@@ -51,13 +51,16 @@ class BmsSelector(QToolButton):
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
         self._anim.valueChanged.connect(self._set_angle)
         self.names: list[str] = []
+        self.labels: list[str] = []  # "1", "2" for BMS, "A", "B" for banks
         self.visible: list[bool] = []
         self.active = 0
 
-    def set_items(self, names: list[str], visible: list[bool], active: int) -> None:
+    def set_items(self, names: list[str], visible: list[bool], active: int,
+                  labels: list[str] | None = None) -> None:
         self.names, self.visible, self.active = list(names), list(visible), active
+        self.labels = list(labels) if labels else [str(i + 1) for i in range(len(names))]
         if names:
-            self.setText(f"{active + 1}. {names[active]}")
+            self.setText(f"{self.labels[active]}. {names[active]}")
 
     def _fill(self) -> None:
         self.menu_.clear()
@@ -65,7 +68,7 @@ class BmsSelector(QToolButton):
             row = QWidget()
             h = QHBoxLayout(row)
             h.setContentsMargins(6, 2, 6, 2)
-            pick = QPushButton(f"{i + 1}. {name}")
+            pick = QPushButton(f"{self.labels[i]}. {name}")
             pick.setFlat(True)
             pick.setCursor(Qt.PointingHandCursor)
             weight = "600" if i == self.active else "400"

@@ -40,6 +40,22 @@ _DEVICE_KEYS = {f.name for f in fields(Device)}
 
 
 @dataclass
+class BankConfig:
+    """Several BMS in parallel, shown as one battery (step D2)."""
+
+    id: str  # stable key (history series "bank:<id>")
+    name: str = ""
+    members: list[str] = field(default_factory=list)  # BMS MAC addresses
+    visible: bool = True  # own strip / widget shown
+    compact_pos: list[int] | None = None
+    letter: str = ""  # A-Z, picked by the user like a drive letter (unique)
+    kind: str = "parallel"  # "parallel" / "series"
+
+
+_BANK_KEYS = {f.name for f in fields(BankConfig)}
+
+
+@dataclass
 class Settings:
     # The first (main) BMS keeps its original top-level fields, so settings
     # files from before multi-BMS support load unchanged; further BMS are
@@ -58,11 +74,13 @@ class Settings:
     taskbar_offset: int | None = None  # strip: logical px from taskbar right edge
     fullscreen_behavior: str = "hide"  # strip during full-screen apps: "hide" / "corner"
     dim_when_maximized: bool = True  # widget/strip see-through + click-through then
+    widgets_on_desktop: bool = False  # floating widgets pinned to the desktop, not on top
     language: str = "auto"  # "auto" (Windows display language), "uk" or "en"
     notify_enabled: bool = True  # Windows notifications (low SOC, alarms, lost, full)
     low_soc_threshold: int = 20  # %, "low battery" notification
     bms_visible: bool = True  # main BMS: strip / widget shown
     extra_devices: list[dict] = field(default_factory=list)  # Device dicts, 2nd BMS on
+    banks: list[dict] = field(default_factory=list)  # BankConfig dicts (parallel banks)
     extra: dict = field(default_factory=dict)  # forward compatibility
 
     # ----- devices --------------------------------------------------------------
@@ -86,6 +104,12 @@ class Settings:
         else:
             self.address, self.bms_name = None, ""
         self.extra_devices = [asdict(d) for d in devices[1:]]
+
+    def bank_configs(self) -> list[BankConfig]:
+        return [BankConfig(**{k: v for k, v in b.items() if k in _BANK_KEYS}) for b in self.banks]
+
+    def set_banks(self, banks: list[BankConfig]) -> None:
+        self.banks = [asdict(b) for b in banks]
 
     @classmethod
     def load(cls, path: Path) -> "Settings":
@@ -124,6 +148,7 @@ class Settings:
         except (TypeError, ValueError):
             self.low_soc_threshold = 20
         self.notify_enabled = bool(self.notify_enabled)
+        self.widgets_on_desktop = bool(self.widgets_on_desktop)
         if self.language not in ("auto", "uk", "en"):
             self.language = "auto"
         if self.fullscreen_behavior not in ("hide", "corner"):
@@ -154,9 +179,54 @@ class Settings:
             entry["visible"] = bool(entry.get("visible", True))
             clean.append(entry)
         self.extra_devices = clean
+        self.banks = clean_banks(self.banks)
 
     def save(self, path: Path) -> None:
         # Write to a temp file first so a crash never leaves a half-written file.
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, path)
+
+
+def clean_banks(banks) -> list[dict]:
+    """Well-formed banks only: unique ids, each BMS in at most one bank,
+    at least two members (a "bank" of one BMS is just that BMS), a known
+    kind and a unique letter (missing / taken ones get the first free)."""
+    from .bank import KINDS, LETTERS, PARALLEL, free_letter
+
+    out, ids, used = [], set(), set()
+    for b in banks if isinstance(banks, list) else []:
+        if not (isinstance(b, dict) and isinstance(b.get("id"), str) and b["id"]):
+            continue
+        if b["id"] in ids:
+            continue
+        members = []
+        for a in b.get("members") if isinstance(b.get("members"), list) else []:
+            if isinstance(a, str) and a.upper() not in used and a.upper() not in members:
+                members.append(a.upper())
+        if len(members) < 2:
+            continue
+        entry = {k: v for k, v in b.items() if k in _BANK_KEYS}
+        entry["members"] = members
+        entry["name"] = str(entry.get("name") or "")
+        entry["visible"] = bool(entry.get("visible", True))
+        pos = entry.get("compact_pos")
+        if not (isinstance(pos, list) and len(pos) == 2):
+            entry["compact_pos"] = None
+        if entry.get("kind") not in KINDS:
+            entry["kind"] = PARALLEL
+        ids.add(b["id"])
+        used.update(members)
+        out.append(entry)
+    letters: set[str] = set()
+    for entry in out:
+        letter = str(entry.get("letter") or "").upper()
+        if letter not in LETTERS or letter in letters:
+            letter = ""
+        entry["letter"] = letter
+        letters.add(letter)
+    for entry in out:
+        if not entry["letter"]:
+            entry["letter"] = free_letter(letters)
+            letters.add(entry["letter"])
+    return out

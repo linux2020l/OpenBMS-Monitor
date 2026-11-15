@@ -142,8 +142,8 @@ History for the chart is in memory only (lost on restart), 10 s buckets.
     with the chart); `ui/cells.py` (cells **tab** next to the chart in the
     dashboard); `state.history_csv` + menu "Export history (CSV)…"
     (comma, dot decimals, local ISO time).
-  - Step D1, several BMS at once (owner 2026-11-15; D2 = parallel banks,
-    not done yet): `app.Monitor` = one BMS (source, tracker, notifier,
+  - Step D1, several BMS at once (owner 2026-11-15; D2 = parallel banks
+    below): `app.Monitor` = one BMS (source, tracker, notifier,
     history, its own `CompactWindow` + `TaskbarStrip`); `Controller.monitors`
     list, `active` = the one the dashboard shows (title-bar selector,
     clicking a strip/widget selects it). Shortcuts `ctl.source/history/
@@ -161,8 +161,46 @@ History for the chart is in memory only (lost on restart), 10 s buckets.
     first (hide, remove), then the shared menu ("Show on the taskbar"
     submenu brings hidden ones back). Python `write_text` on Windows writes
     CRLF; keep sources LF (git has `text=auto`) or exact-text edits fail.
-    Settings dialog is tabbed (BMS list with add/change/remove, display,
-    state & alerts, system). Never show a modal box from code that tests
+    Settings dialog is tabbed (BMS list with add/change/remove, banks,
+    display, state & alerts, system).
+  - Step D2, parallel banks (owner's choices 2026-11-15: several banks, one
+    strip per bank, offline member = computed from the rest + warning,
+    bank notifies low SOC / full, members notify alarms / lost):
+    `bank.py` (pure: `combine_cells` = mean voltage, summed current and
+    Ah, SOC = sum remaining / sum nominal (plain mean if a capacity is
+    unknown), MOSFET on only if on in every pack, alarm union;
+    `bank_label` A, B, …). `settings.banks` = `BankConfig` dicts (id,
+    name, member MACs, visible, compact_pos); `clean_banks` drops
+    malformed banks, a BMS in two banks, banks under 2 members.
+    `app.View` is the base of `Monitor` (one BMS) and `Bank`: own tracker,
+    notifier, history (SQLite key `bank:<id>`), widget and strip.
+    `Controller.views` = banks first, then BMS; `active` and the dashboard
+    selector index into views; `label()` gives letters / numbers. A member's
+    `on_cell` feeds its bank. `Snapshot.members/offline/partial` drive the
+    amber "1 of 2 BMS offline" in dashboard, widget, strip letter, tray.
+    Creating a bank hides its members' strips; ungrouping / removing a
+    member (bank under 2) shows them again. Editor: `ui/bank_dialog.py`.
+    Later the same day (owner): bank cells per pack (`Snapshot.packs`,
+    `CellsView` groups on one common scale, own spread per pack),
+    parallel "flow between packs" row (`bank.exchange_current` = min of
+    summed charging / discharging currents; energy counters stay external
+    = net history), user-picked letter per bank (`BankConfig.letter`,
+    unique, banks sorted by letter, `free_letter`), and **series banks**
+    (`BankConfig.kind`): voltage sum, mean current, SOC / Ah of the weakest
+    pack, cells numbered 1..N across packs + overall spread, no flow row;
+    an offline member counts with its last voltage for `SERIES_GRACE_S`
+    (60 s), then `Snapshot.missing` → stale + red "no data from a BMS of
+    the bank". Status dots removed from dashboard title and widget (owner).
+  - Widgets on the desktop (owner 2026-11-15, `widgets_on_desktop`):
+    `CompactWindow.set_on_desktop` drops `WindowStaysOnTopHint`,
+    `win_taskbar.pin_to_desktop` makes Progman the window's owner (never
+    below the desktop, survives Win+D) and sends it to HWND_BOTTOM; owning
+    alone failed on the owner's PC (Windows raises a window on every
+    show / click), so `CompactWindow.nativeEvent` rewrites every
+    WM_WINDOWPOSCHANGING to HWND_BOTTOM (`keep_at_bottom`). Verified on
+    the real screen with a z-order script (under another window after
+    show, raise and hide/show; still above Progman). No dimming for
+    desktop widgets. Never show a modal box from code that tests
     reach without a tray (offscreen): `_notify` falls back to QMessageBox.
   - `capture.py` (log format; `# driver <id>` header), `replay.py` (plays a
     capture back with original timing).

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -12,10 +12,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import strings
+from .. import strings, win_taskbar
 from ..state import CHARGING, DISCHARGING, Snapshot
 from . import icons, theme
-from .widgets import DragMover, StatusDot, Updater, rounded_corners
+from .widgets import DragMover, Updater, native_hwnd, rounded_corners
 
 STATE_COLORS = {CHARGING: theme.GREEN, DISCHARGING: theme.AMBER}
 
@@ -66,6 +66,7 @@ class CompactWindow(QWidget):
 
     def __init__(self) -> None:
         super().__init__(None, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.on_desktop = False  # pinned to the desktop instead of always on top
         rounded_corners(self)
         self.setWindowTitle(strings.APP_TITLE)
         self.upd = Updater()
@@ -84,7 +85,6 @@ class CompactWindow(QWidget):
         left.setSpacing(0)
         top = QHBoxLayout()
         top.setSpacing(6)
-        self.dot = StatusDot(10)
         self.soc = QLabel()
         # BMS number when several are shown (same as in the settings list).
         self.number = QLabel()
@@ -92,7 +92,6 @@ class CompactWindow(QWidget):
         self.number.setStyleSheet("font-size: 9pt; font-weight: 600;")
         self.number.hide()
         top.addWidget(self.number, 0, Qt.AlignVCenter)
-        top.addWidget(self.dot, 0, Qt.AlignVCenter)
         top.addWidget(self.soc)
         left.addLayout(top)
         self.state = QLabel()
@@ -140,15 +139,47 @@ class CompactWindow(QWidget):
         self.setMinimumWidth(380)
         self.update_view(Snapshot(cell=None))
 
-    def set_number(self, number: int | None) -> None:
+    def set_on_desktop(self, on: bool) -> None:
+        """Always on top (default) or pinned to the desktop under other windows."""
+        if on == self.on_desktop:
+            return
+        self.on_desktop = on
+        shown = self.isVisible()
+        flags = Qt.Tool | Qt.FramelessWindowHint
+        self.setWindowFlags(flags if on else flags | Qt.WindowStaysOnTopHint)
+        if shown:  # setWindowFlags hides the window
+            self.show()
+        elif self.testAttribute(Qt.WA_WState_Created):
+            win_taskbar.pin_to_desktop(native_hwnd(self), on)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # The native window may be new after setWindowFlags: corners and owner again.
+        rounded_corners(self)
+        win_taskbar.pin_to_desktop(native_hwnd(self), self.on_desktop)
+        if self.on_desktop:
+            # showEvent comes before Windows shows the window (which puts it on
+            # top): send it down again once it is really visible.
+            QTimer.singleShot(0, lambda: win_taskbar.pin_to_desktop(native_hwnd(self),
+                                                                    self.on_desktop))
+
+    def nativeEvent(self, event_type, message):
+        # Pinned to the desktop: never let Windows raise it above other apps
+        # (on show, on click, after the dashboard is collapsed).
+        if self.on_desktop and bytes(event_type) == b"windows_generic_MSG":
+            win_taskbar.keep_at_bottom(int(message))
+        return super().nativeEvent(event_type, message)
+
+    def set_number(self, number: int | str | None) -> None:
         self.number.setText("" if number is None else str(number))
         self.number.setVisible(number is not None)
 
     def update_view(self, snap: Snapshot) -> None:
         upd = self.upd
         cell = snap.cell
-        self.dot.set_color(theme.STATUS_COLORS.get(snap.status, theme.GREY))
-        upd("dot_tip", strings.STATUS_TEXT.get(snap.status, snap.status), self.dot.setToolTip)
+        # No status dot (owner's request 2026-11-15): the status text below says it,
+        # and the SOC tooltip names the connection state.
+        upd("soc_tip", strings.STATUS_TEXT.get(snap.status, snap.status), self.soc.setToolTip)
 
         main = theme.MUTED if snap.stale else theme.TEXT
         if cell is None:
@@ -181,8 +212,16 @@ class CompactWindow(QWidget):
             text, tip = name, status  # current ≈ 0: no estimate, show the name
         else:
             text, tip = status, snap.status_detail
+        if snap.partial:  # bank: some of its BMS are not in the sums
+            text = strings.BANK_PARTIAL_SHORT.format(n=len(snap.offline), total=snap.members)
+            tip = strings.partial_note(snap)
+        elif snap.missing:
+            text = strings.BANK_NO_DATA_SHORT
+            tip = strings.BANK_NO_DATA_SUB.format(names=", ".join(snap.missing))
         upd("status", text, self.status.setText)
         upd("status_tip", tip, self.status.setToolTip)
+        upd("status_style", theme.AMBER if snap.partial else (theme.RED if snap.missing else ""),
+            lambda c: self.status.setStyleSheet(f"color: {c};" if c else ""))
         alarm_button_style(self.alarm_btn, snap, 18, upd)
 
     def contextMenuEvent(self, event) -> None:

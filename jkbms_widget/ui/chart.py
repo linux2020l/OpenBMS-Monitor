@@ -35,7 +35,10 @@ SOC_DISCHARGE_COLOR = "#f6d98f"
 SOC_IDLE_COLOR = "#d6dae2"
 PANEL_BG = "#12151c"  # a bit darker than the card behind the chart
 PANEL_PAD = 6.0  # px the panel background extends around the plot area
-ZERO_CURRENT = 0.05  # A; below this a segment counts as "no current"
+# Default idle threshold, A. The dashboard sets the user's threshold (settings,
+# same as the Idle state): a bank's summed current is rarely exactly 0, so a
+# tiny fixed value coloured idle banks as charging / discharging (owner's report).
+ZERO_CURRENT = 0.05
 
 CURRENT_AXIS_STEP = 10.0  # A; owner's request: currents can exceed 100 A
 TIME_STEPS = (60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400)
@@ -96,18 +99,19 @@ def _decimate(points: list[HistoryPoint], width_px: int) -> list[HistoryPoint]:
     return out
 
 
-def _direction_color(current: float) -> str:
-    if current > ZERO_CURRENT:
+def _direction_color(current: float, idle: float = ZERO_CURRENT) -> str:
+    """|current| below `idle` (A) counts as idle (grey)."""
+    if current >= idle:
         return CHARGE_COLOR
-    if current < -ZERO_CURRENT:
+    if current <= -idle:
         return DISCHARGE_COLOR
     return ZERO_COLOR
 
 
-def _soc_color(current: float) -> str:
-    if current > ZERO_CURRENT:
+def _soc_color(current: float, idle: float = ZERO_CURRENT) -> str:
+    if current >= idle:
         return SOC_CHARGE_COLOR
-    if current < -ZERO_CURRENT:
+    if current <= -idle:
         return SOC_DISCHARGE_COLOR
     return SOC_IDLE_COLOR
 
@@ -119,6 +123,7 @@ class HistoryChart(QWidget):
         self.points: list[HistoryPoint] = []
         self._times: list[float] = []
         self.span_s = 3600.0
+        self.idle_threshold = ZERO_CURRENT  # A; set from the settings by the dashboard
         self.empty_text = ""
         self._now = time.time()
         self._hover_x: float | None = None
@@ -231,8 +236,10 @@ class HistoryChart(QWidget):
 
         # Both lines: one path per colour, each segment coloured by the
         # direction of the current at its end; no segment across a gap.
-        self._draw_segments(p, pts, max_gap, soc_rect, soc_y, _soc_color, 1.8)
-        self._draw_segments(p, pts, max_gap, cur_rect, cur_y, _direction_color, 2.0)
+        idle = self.idle_threshold
+        self._draw_segments(p, pts, max_gap, soc_rect, soc_y, lambda i: _soc_color(i, idle), 1.8)
+        self._draw_segments(p, pts, max_gap, cur_rect, cur_y,
+                            lambda i: _direction_color(i, idle), 2.0)
         p.restore()
 
         self._paint_hover(p, fm, soc_rect, cur_rect, soc_y, cur_y)
@@ -272,8 +279,8 @@ class HistoryChart(QWidget):
         # Crosshair across both panels + markers on the lines.
         p.setPen(QPen(QColor(theme.MUTED), 1, Qt.DashLine))
         p.drawLine(QPointF(px, soc_rect.top()), QPointF(px, cur_rect.bottom()))
-        color = _direction_color(pt.current)
-        soc_color = _soc_color(pt.current)
+        color = _direction_color(pt.current, self.idle_threshold)
+        soc_color = _soc_color(pt.current, self.idle_threshold)
         for y, c in ((soc_y(pt), soc_color), (cur_y(pt), color)):
             p.setPen(QPen(QColor(theme.BG), 2))
             p.setBrush(QColor(c))

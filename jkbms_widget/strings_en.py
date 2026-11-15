@@ -249,3 +249,45 @@ TIP_EYE = "Show this BMS's strip / widget. Data and the chart are always recorde
 
 LOW_SOC_STATE = "Low charge (threshold {t}%)"
 BALANCING_ACTIVE = "Active"
+
+# Parallel banks (step D2) + widgets on the desktop
+BANK_DEFAULT_NAME = "Bank {label}"
+SETTINGS_TAB_BANKS = "Banks"
+BANK_CREATE = "Create bank…"
+BANK_REMOVE = "Ungroup"
+BANKS_NOTE = ("A bank is several BMS wired in parallel. The app shows them as one battery: "
+              "total current and power, capacity-weighted SOC, one chart and one taskbar "
+              "strip. Each BMS of the bank can still be opened in the main window.")
+BANKS_EMPTY = "No banks yet"
+BANK_EDITOR_TITLE = "Bank"
+BANK_NAME_LABEL = "Name"
+BANK_MEMBERS_LABEL = "BMS in this bank (at least two)"
+BANK_EDITOR_NOTE = ("BMS that belong to another bank are not listed. The strips of the bank's "
+                    "BMS are hidden; bring them back with the eye in the BMS list.")
+BANK_SAVE = "Save"
+BANK_NEED_TWO = "A bank needs at least two BMS that are not in another bank yet."
+BANK_MEMBERS_DETAIL = "{n} BMS: {names}"
+BANK_MEMBER_OF = "in bank {label}"
+MENU_REMOVE_BANK = "Ungroup this bank"
+BANK_PARTIAL = "{n} of {total} BMS offline"
+BANK_PARTIAL_SHORT = "{n} of {total} offline"  # compact widget
+BANK_PARTIAL_SUB = "Not counted: {names}"
+TIP_EYE_BANK = "Show this bank's strip / widget. Data and chart are always recorded."
+DESKTOP_LABEL = "Widgets on the desktop (not on top of other windows)"
+DESKTOP_NOTE = ("Widgets stay under other programs and remain visible after Show desktop "
+                "(Win+D). The taskbar strip does not change.")
+ROW_EXCHANGE = "Flow between packs:"
+EXCHANGE_TIP = ("Current flowing from one pack of the bank into another. It cancels out in "
+                "the bank's total, which is what goes to the inverter or comes from the charger.")
+BANK_KIND_NAMES = {"parallel": "Parallel", "series": "Series"}
+BANK_KIND_LABEL = "Connection"
+BANK_KIND_TIPS = {
+    "parallel": "Same voltage; currents and capacities add up; capacity-weighted SOC.",
+    "series": "Voltages add up, the current is common; SOC and time left follow the weakest pack.",
+}
+BANK_LETTER_LABEL = "Letter"
+BANK_SERIES_PARTIAL_SUB = "Last known voltage: {names}"
+BANK_NO_DATA = "No data from a BMS of the bank"
+BANK_NO_DATA_SHORT = "No data"
+BANK_NO_DATA_SUB = "Offline for over a minute: {names}"
+CELLS_ALL = "All cells:"

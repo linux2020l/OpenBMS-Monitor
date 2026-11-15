@@ -55,7 +55,7 @@ class TaskbarStrip(QWidget):
         self.snap = Snapshot(cell=None)
         self.offset: int | None = None  # group offset; None = right next to the tray
         self.slot = 0  # position in the group (several BMS: one strip each, right to left)
-        self.number: int | None = None  # BMS number shown left of the icon (several BMS)
+        self.number: int | str | None = None  # BMS number / bank letter left of the icon
         self.wanted = False  # taskbar mode is on
         self.fullscreen_behavior = "hide"  # or "corner"
         self.light = False
@@ -145,7 +145,7 @@ class TaskbarStrip(QWidget):
         wt.keep_on_top(native_hwnd(self))
 
     # ----- painting ---------------------------------------------------------
-    def set_number(self, number: int | None) -> None:
+    def set_number(self, number: int | str | None) -> None:
         if number != self.number:
             self.number = number
             self.update()
@@ -183,7 +183,9 @@ class TaskbarStrip(QWidget):
         # BMS number when several are shown (same as in the settings list).
         if self.number is not None:
             p.setFont(QFont(theme.FONT_FAMILY, 8, QFont.Bold))
-            p.setPen(muted)
+            # Amber letter: a BMS of this bank has no fresh data (details in the tooltip).
+            p.setPen(QColor(theme.AMBER) if snap.partial
+                     else (QColor(theme.RED) if snap.missing else muted))
             p.drawText(QRectF(2, 0, NUMBER_WIDTH, h), Qt.AlignCenter, str(self.number))
 
         # Battery icon (replaces the old status dot and the right-hand check).
@@ -236,6 +238,12 @@ class TaskbarStrip(QWidget):
             text = strings.STATUS_TEXT.get(snap.status, snap.status)
         else:
             text = strings.NO_ALARMS
+        if snap.partial:
+            text = (strings.BANK_PARTIAL.format(n=len(snap.offline), total=snap.members) + "\n"
+                    + strings.partial_note(snap) + "\n" + text)
+        elif snap.missing:
+            text = (strings.BANK_NO_DATA + "\n"
+                    + strings.BANK_NO_DATA_SUB.format(names=", ".join(snap.missing)))
         if snap.is_low:
             text = strings.LOW_SOC_STATE.format(t=snap.low_soc) + "\n" + text
         # Several strips side by side: say which BMS this one is.

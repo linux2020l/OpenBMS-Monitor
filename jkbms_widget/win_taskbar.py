@@ -58,6 +58,18 @@ if IS_WINDOWS:
 
     _ABM_GETSTATE, _ABM_GETTASKBARPOS = 4, 5
     _HWND_TOPMOST = wintypes.HWND(-1)
+    _HWND_BOTTOM = wintypes.HWND(1)
+
+    class _WINDOWPOS(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("hwndInsertAfter", wintypes.HWND),
+            ("x", ctypes.c_int),
+            ("y", ctypes.c_int),
+            ("cx", ctypes.c_int),
+            ("cy", ctypes.c_int),
+            ("flags", wintypes.UINT),
+        ]
     _SWP_NOSIZE, _SWP_NOMOVE, _SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
     _user32.SetWindowPos.argtypes = [
         wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
@@ -289,3 +301,44 @@ def keep_on_top(hwnd: int) -> None:
             wintypes.HWND(hwnd), _HWND_TOPMOST, 0, 0, 0, 0,
             _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOACTIVATE,
         )
+
+
+def pin_to_desktop(hwnd: int, enabled: bool) -> None:
+    """Desktop mode of the floating widget (owner's request 2026-11-15).
+
+    The window gets the desktop (Progman) as its owner: an owned window
+    never goes below its owner, and "Show desktop" (Win+D) does not hide it,
+    like a desktop gadget. Owning alone is not enough: Windows still puts a
+    window on top whenever it is shown or clicked (owner's report
+    2026-11-15: the widget came up over other apps after the dashboard was
+    collapsed). So it is also sent to the bottom here, and the widget's
+    nativeEvent calls keep_at_bottom() for every z-order change.
+    enabled=False removes the owner again (the Qt stays-on-top flag then
+    makes it topmost).
+    """
+    if not (IS_WINDOWS and hwnd):
+        return
+    GWLP_HWNDPARENT = -8  # for top-level windows this is the owner
+    owner = (_user32.FindWindowW("Progman", None) or 0) if enabled else 0  # HWND as int
+    _user32.SetWindowLongPtrW(wintypes.HWND(hwnd), GWLP_HWNDPARENT, owner)
+    if enabled:  # HWND_BOTTOM also drops topmost; the owner keeps it above the desktop
+        _user32.SetWindowPos(wintypes.HWND(hwnd), _HWND_BOTTOM, 0, 0, 0, 0,
+                             _SWP_NOMOVE | _SWP_NOSIZE | _SWP_NOACTIVATE)
+
+
+WM_WINDOWPOSCHANGING = 0x0046
+_SWP_NOZORDER = 0x0004
+
+
+def keep_at_bottom(message: int) -> None:
+    """For QWidget.nativeEvent: turn any z-order change of the window into
+    "to the bottom" (just above its owner, the desktop). `message` is the
+    address of the Windows MSG Qt passes in."""
+    if not (IS_WINDOWS and message):
+        return
+    msg = wintypes.MSG.from_address(message)
+    if msg.message != WM_WINDOWPOSCHANGING or not msg.lParam:
+        return
+    pos = _WINDOWPOS.from_address(msg.lParam)
+    pos.hwndInsertAfter = 1  # HWND_BOTTOM
+    pos.flags &= ~_SWP_NOZORDER

@@ -6,11 +6,13 @@ expandable dashboard, and the tray icon with the shared menu.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import sqlite3
 import sys
 import time
+import uuid
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -20,9 +22,10 @@ from PySide6.QtWidgets import QApplication, QDialog, QMenu, QMessageBox, QSystem
 
 from . import autostart, strings, win_taskbar
 from . import drivers
+from .bank import SERIES, combine_cells, free_letter
 from .model import CellInfo, DeviceInfo
 from .notifications import ALARM, FULL, LOST, LOW_SOC, Notifier
-from .settings import Device, Settings, app_dir
+from .settings import BankConfig, Device, Settings, app_dir
 from .sources import BleSource, DataSource, ReplaySource
 from .history_store import RETENTION_S, HistoryStore
 from .state import History, Snapshot, StateTracker, time_left
@@ -43,6 +46,11 @@ LIVE_STATUSES = ("connected", "replay")
 HISTORY_PRUNE_MS = 60 * 60 * 1000  # drop points older than 7 days once an hour
 MODE_WIDGET, MODE_TASKBAR = "widget", "taskbar"
 ONE_SHOT_FLAGS = {"--autostart": 0, "--exit-after": 1}  # flag -> number of values
+# Owner's choice (D2): a bank reports low charge / full itself; alarms and
+# lost links come from each of its BMS (the bank's alarms are their union).
+BANK_EVENTS = frozenset({LOW_SOC, FULL})
+MEMBER_EVENTS = frozenset({ALARM, LOST})
+SERIES_GRACE_S = 60.0  # series bank: an offline pack's last voltage is used this long
 
 
 def restart_command(frozen: bool, executable: str, argv: list[str],
@@ -65,32 +73,85 @@ def restart_command(frozen: bool, executable: str, argv: list[str],
     return executable, out
 
 
-class Monitor(QObject):
-    """One BMS: its data source, derived state, history and its own small
-    views (floating widget + taskbar strip). The Controller owns a list of
-    them (several BMS at once, owner's request 2026-11-15)."""
+class View(QObject):
+    """Something shown as one battery: a BMS (Monitor) or a parallel bank
+    (Bank). Each has its own state, history, notifications, floating widget
+    and taskbar strip."""
 
-    def __init__(self, ctl: "Controller", device: Device | None) -> None:
+    source: DataSource | None = None
+
+    def __init__(self, ctl: "Controller") -> None:
         super().__init__()
         self.ctl = ctl
-        self.device = device  # None until the first BMS is picked
         s = ctl.settings
-        self.source: DataSource | None = None
         self.tracker = StateTracker(s.idle_threshold)
         self.notifier = Notifier(s.low_soc_threshold)
         self.history = History(on_bucket_closed=self._store_point)
-        self.cell: CellInfo | None = None
-        self.last_cell_at = 0.0
-        self.status, self.status_detail = "stopped", ""
-        self.device_name = device.name if device else ""
         self.compact = CompactWindow()
+        self.compact.set_on_desktop(s.widgets_on_desktop)
         self.strip = TaskbarStrip()
         self.strip.offset = s.taskbar_offset
         self.strip.fullscreen_behavior = s.fullscreen_behavior
 
     @property
+    def history_key(self) -> str | None:
+        """Name of this view's series in the history database."""
+        raise NotImplementedError
+
+    # ----- history (10 s buckets, one SQLite series per BMS / bank) ---------------
+    def _store_point(self, point) -> None:
+        store = self.ctl.store
+        if store is None or not self.history_key:
+            return
+        try:
+            store.add(self.history_key, point)
+        except sqlite3.Error:
+            log.exception("cannot store history point")
+
+    def load_history(self) -> None:
+        store = self.ctl.store
+        if store is None or not self.history_key:
+            return
+        now = time.time()
+        try:
+            self.history.extend(store.load(self.history_key, now - RETENTION_S), now)
+        except sqlite3.Error:
+            log.exception("cannot load history")
+
+    def save_history(self) -> None:
+        """Store the bucket still being filled (on exit / BMS switch)."""
+        point = self.history.open_bucket()
+        if point is not None:
+            self._store_point(point)
+
+    def close_views(self) -> None:
+        self.strip.set_wanted(False)
+        for w in (self.compact, self.strip):
+            w.hide()
+            w.deleteLater()
+
+
+class Monitor(View):
+    """One BMS: its data source, derived state, history and its own small
+    views (floating widget + taskbar strip). The Controller owns a list of
+    them (several BMS at once, owner's request 2026-11-15)."""
+
+    def __init__(self, ctl: "Controller", device: Device | None) -> None:
+        super().__init__(ctl)
+        self.device = device  # None until the first BMS is picked
+        self.source: DataSource | None = None
+        self.cell: CellInfo | None = None
+        self.last_cell_at = 0.0
+        self.status, self.status_detail = "stopped", ""
+        self.device_name = device.name if device else ""
+
+    @property
     def address(self) -> str | None:
         return self.device.address if self.device else None
+
+    @property
+    def history_key(self) -> str | None:
+        return self.address
 
     @property
     def visible(self) -> bool:
@@ -157,6 +218,9 @@ class Monitor(QObject):
         self.tracker.update(cell.current, mono)
         self.history.add(time.time(), cell.soc, cell.current, cell.pack_voltage)
         self.cell, self.last_cell_at = cell, mono
+        bank = self.ctl.bank_of(self)
+        if bank is not None:
+            bank.feed()
         self.ctl.render()
 
     def snapshot(self) -> Snapshot:
@@ -175,38 +239,116 @@ class Monitor(QObject):
             device_name=self.device_name, low_soc=self.ctl.settings.low_soc_threshold,
         )
 
-    # ----- history (10 s buckets, one SQLite series per BMS address) ----------------
-    def _store_point(self, point) -> None:
-        store = self.ctl.store
-        if store is None or not self.address:
+
+
+class Bank(View):
+    """Several BMS wired in parallel, shown as one battery (step D2).
+
+    Values come from the members with fresh data (bank.combine_cells);
+    members without data are left out and listed in Snapshot.offline, so
+    the views can warn. The bank keeps its own state, history and strip."""
+
+    address = None
+
+    def __init__(self, ctl: "Controller", config: BankConfig) -> None:
+        super().__init__(ctl)
+        self.config = config
+        self.created = time.monotonic()  # series: grace for packs not connected yet
+
+    @property
+    def history_key(self) -> str:
+        return f"bank:{self.config.id}"
+
+    @property
+    def device_name(self) -> str:
+        return self.config.name or strings.BANK_DEFAULT_NAME.format(label=self.ctl.label(self))
+
+    @property
+    def visible(self) -> bool:
+        return self.config.visible
+
+    @property
+    def members(self) -> list[Monitor]:
+        wanted = set(self.config.members)
+        return [m for m in self.ctl.monitors if m.address and m.address.upper() in wanted]
+
+    @property
+    def running(self) -> bool:
+        return any(m.running for m in self.members)
+
+    def _member_snaps(self) -> list[tuple[Monitor, Snapshot]]:
+        return [(m, m.snapshot()) for m in self.members]
+
+    def _combined(self) -> dict:
+        """The bank's reading and how complete it is (see Snapshot fields)."""
+        now = time.monotonic()
+        snaps = self._member_snaps()
+        name = {m: s.device_name or m.address for m, s in snaps}
+        live = [s for _, s in snaps if not s.stale]
+        series = self.config.kind == SERIES
+        missing: tuple[str, ...] = ()
+        if series:
+            # Without a pack the string voltage is unknown: use its last known
+            # voltage for a while, then report the bank as having no data
+            # (owner's choice 2026-11-15).
+            def gone(m: Monitor) -> bool:
+                since = m.last_cell_at if m.cell is not None else self.created
+                return now - since > SERIES_GRACE_S
+
+            missing = tuple(name[m] for m, s in snaps if s.stale and gone(m))
+            complete = all(s.cell is not None for _, s in snaps)
+            if live and complete and not missing:
+                cell = combine_cells([s.cell for _, s in snaps], SERIES)
+                # The current is common: take it from fresh readings only.
+                cell = dataclasses.replace(cell, current=sum(s.cell.current for s in live) / len(live))
+                stale = False
+            else:
+                cell = combine_cells([s.cell for _, s in snaps if s.cell is not None], SERIES)
+                stale = True
+            packs = tuple((name[m], s.cell) for m, s in snaps if s.cell is not None)
+        elif live:
+            cell, stale = combine_cells([s.cell for s in live]), False
+            packs = tuple((name[m], s.cell) for m, s in snaps if not s.stale)
+        else:  # nothing fresh: last known values, greyed out
+            cell = combine_cells([s.cell for _, s in snaps if s.cell is not None])
+            stale = True
+            packs = tuple((name[m], s.cell) for m, s in snaps if s.cell is not None)
+        if not stale:
+            offline = tuple(name[m] for m, s in snaps if s.stale)
+            status, detail = live[0].status, ""
+        else:
+            offline = ()
+            trying = [s for _, s in snaps if s.status != "stopped"] or [s for _, s in snaps]
+            status, detail = (trying[0].status, trying[0].status_detail) if trying else ("stopped", "")
+        return dict(cell=cell, stale=stale, offline=offline, missing=missing, packs=packs,
+                    status=status, detail=detail, members=len(snaps))
+
+    @property
+    def cell(self) -> CellInfo | None:
+        c = self._combined()
+        return None if c["stale"] else c["cell"]
+
+    def feed(self) -> None:
+        """A member got new data: update the bank's state and history."""
+        cell = self.cell
+        if cell is None:
             return
-        try:
-            store.add(self.address, point)
-        except sqlite3.Error:
-            log.exception("cannot store history point")
+        self.tracker.update(cell.current, time.monotonic())
+        self.history.add(time.time(), cell.soc, cell.current, cell.pack_voltage)
 
-    def load_history(self) -> None:
-        store = self.ctl.store
-        if store is None or not self.address:
-            return
-        now = time.time()
-        try:
-            self.history.extend(store.load(self.address, now - RETENTION_S), now)
-        except sqlite3.Error:
-            log.exception("cannot load history")
-
-    def save_history(self) -> None:
-        """Store the bucket still being filled (on exit / BMS switch)."""
-        point = self.history.open_bucket()
-        if point is not None:
-            self._store_point(point)
-
-    def close_views(self) -> None:
-        self.strip.set_wanted(False)
-        for w in (self.compact, self.strip):
-            w.hide()
-            w.deleteLater()
-
+    def snapshot(self) -> Snapshot:
+        c = self._combined()
+        cell, stale = c["cell"], c["stale"]
+        hours, kind = (None, None)
+        if cell is not None and not stale:
+            hours, kind = time_left(cell, self.tracker.estimate_current)
+        return Snapshot(
+            cell=cell, state=self.tracker.state, hours_left=hours, left_kind=kind,
+            stale=stale, status=c["status"], status_detail=c["detail"],
+            device_name=self.device_name, low_soc=self.ctl.settings.low_soc_threshold,
+            members=c["members"], offline=c["offline"], packs=c["packs"],
+            series=self.config.kind == SERIES, missing=c["missing"],
+        )
 
 class Controller(QObject):
     """Owns the BMS monitors, the shared dashboard, tray and menu."""
@@ -238,8 +380,15 @@ class Controller(QObject):
         self.menu.aboutToShow.connect(self.populate_menu)
         for device in settings.devices() or [None]:
             self.monitors.append(self._new_monitor(device))
+        self.banks: list[Bank] = []
+        known = {m.address.upper() for m in self.monitors if m.address}
+        for config in settings.bank_configs():
+            if len(set(config.members) & known) >= 2:  # members removed by hand: skip
+                self.banks.append(self._new_bank(config))
+        self._sort_banks()
 
         self.dashboard = DashboardWindow(self.mon.history)
+        self.dashboard.set_idle_threshold(settings.idle_threshold)
         self.dashboard.settings_requested.connect(self.open_settings)
         self.dashboard.alarms_requested.connect(lambda: self.show_alarms())
         self.dashboard.toggle_connection.connect(self.toggle_connection)
@@ -247,7 +396,7 @@ class Controller(QObject):
         self.dashboard.collapse_requested.connect(self.collapse)
         self.dashboard.context_menu.connect(self.show_menu)
         self.dashboard.monitor_selected.connect(self.set_active)
-        self.dashboard.visibility_toggled.connect(self.set_visible)
+        self.dashboard.visibility_toggled.connect(self.set_view_visible)
         self._update_dashboard_list()
 
         self.tray: QSystemTrayIcon | None = None
@@ -272,22 +421,52 @@ class Controller(QObject):
         self.history_timer.start(HISTORY_PRUNE_MS)
 
     # ----- monitors -------------------------------------------------------------
+    def _wire(self, v: View) -> None:
+        v.load_history()
+        v.compact.alarms_requested.connect(lambda v=v: self.show_alarms(v))
+        v.compact.expand_requested.connect(lambda v=v: self.expand(v))
+        v.compact.context_menu.connect(lambda pos, v=v: self.show_menu(pos, v))
+        v.compact.settings_requested.connect(self.open_settings)
+        v.strip.clicked.connect(lambda v=v: self.toggle_dashboard(v))
+        v.strip.alarms_clicked.connect(lambda v=v: self.show_alarms(v))
+        v.strip.context_menu.connect(lambda pos, v=v: self.show_menu(pos, v))
+        v.strip.offset_changed.connect(self._on_strip_moved)
+
     def _new_monitor(self, device: Device | None) -> Monitor:
         m = Monitor(self, device)
-        m.load_history()
-        m.compact.alarms_requested.connect(lambda m=m: self.show_alarms(m))
-        m.compact.expand_requested.connect(lambda m=m: self.expand(m))
-        m.compact.context_menu.connect(lambda pos, m=m: self.show_menu(pos, m))
-        m.compact.settings_requested.connect(self.open_settings)
-        m.strip.clicked.connect(lambda m=m: self.toggle_dashboard(m))
-        m.strip.alarms_clicked.connect(lambda m=m: self.show_alarms(m))
-        m.strip.context_menu.connect(lambda pos, m=m: self.show_menu(pos, m))
-        m.strip.offset_changed.connect(self._on_strip_moved)
+        self._wire(m)
         return m
 
+    def _new_bank(self, config: BankConfig) -> Bank:
+        b = Bank(self, config)
+        self._wire(b)
+        return b
+
+    def _sort_banks(self) -> None:
+        """Banks in letter order, like drives (A next to the tray)."""
+        self.banks.sort(key=lambda b: b.config.letter)
+
     @property
-    def mon(self) -> Monitor:
-        return self.monitors[min(self.active, len(self.monitors) - 1)]
+    def views(self) -> list[View]:
+        """Everything with its own strip / widget: banks first (the first one
+        sits next to the tray), then every BMS."""
+        return [*self.banks, *self.monitors]
+
+    def label(self, v: View) -> str:
+        """Banks have the user's letter, BMS are numbered as in the settings list."""
+        if isinstance(v, Bank):
+            return v.config.letter
+        return str(self.monitors.index(v) + 1)
+
+    def bank_of(self, m: Monitor) -> Bank | None:
+        address = (m.address or "").upper()
+        return next((b for b in getattr(self, "banks", ()) if address in b.config.members), None)
+
+    @property
+    def mon(self) -> View:
+        """The view the dashboard shows (a BMS or a bank)."""
+        views = self.views
+        return views[min(self.active, len(views) - 1)]
 
     # Shortcuts to the active monitor (single-BMS code paths and tests).
     compact = property(lambda self: self.mon.compact)
@@ -306,7 +485,7 @@ class Controller(QObject):
         return self.mon.snapshot()
 
     def set_active(self, index: int) -> None:
-        if not 0 <= index < len(self.monitors) or index == self.active:
+        if not 0 <= index < len(self.views) or index == self.active:
             return
         self.active = index
         self.dashboard.set_history(self.mon.history)
@@ -314,8 +493,17 @@ class Controller(QObject):
         self.render()
 
     def _update_dashboard_list(self) -> None:
-        names = [m.device_name or m.address or strings.BMS_NOT_SET for m in self.monitors]
-        self.dashboard.set_monitors(names, self.active, [m.visible for m in self.monitors])
+        views = self.views
+        names = [v.device_name or v.address or strings.BMS_NOT_SET for v in views]
+        self.dashboard.set_monitors(names, self.active, [v.visible for v in views],
+                                    [self.label(v) for v in views])
+
+    def _set_active_view(self, view: View | None) -> None:
+        """Keep showing `view` after the list changed (else the first one)."""
+        views = self.views
+        self.active = views.index(view) if view in views else 0
+        self.dashboard.set_history(self.mon.history)
+        self._update_dashboard_list()
 
     def save_devices(self) -> None:
         if self.replay:
@@ -347,19 +535,28 @@ class Controller(QObject):
     def render(self) -> None:
         mono = time.monotonic()
         snaps = []
-        for m in self.monitors:
-            snap = m.snapshot()
+        active = self.mon
+        for v in self.views:
+            snap = v.snapshot()
             snaps.append(snap)
             if self.settings.notify_enabled and not self.replay:
-                for event in m.notifier.update(snap, mono):
-                    self._toast(event, snap)
-            m.compact.update_view(snap)
-            m.strip.update_view(snap)
-            if m is self.mon and self.dashboard.isVisible():
+                if isinstance(v, Bank):
+                    kinds = BANK_EVENTS
+                else:
+                    kinds = MEMBER_EVENTS if self.bank_of(v) is not None else None
+                for event in v.notifier.update(snap, mono):
+                    if kinds is None or event.kind in kinds:
+                        self._toast(event, snap)
+            v.compact.update_view(snap)
+            v.strip.update_view(snap)
+            if v is active and self.dashboard.isVisible():
                 self.dashboard.update_view(snap)
-        self._update_tray(snaps)
+        # The tooltip lists banks and BMS outside banks (members are in their bank).
+        listed = [s for v, s in zip(self.views, snaps)
+                  if isinstance(v, Bank) or self.bank_of(v) is None]
+        self._update_tray(snaps, listed)
 
-    def _update_tray(self, snaps: list[Snapshot]) -> None:
+    def _update_tray(self, snaps: list[Snapshot], listed: list[Snapshot] | None = None) -> None:
         if self.tray is None:
             return
         main = snaps[0]
@@ -372,12 +569,16 @@ class Controller(QObject):
             self.tray.setIcon(icons.battery_level_icon(
                 None if cell is None else cell.soc, color, faults))
         lines = []
-        for snap in snaps:
+        listed = snaps if listed is None else listed
+        for snap in listed:
             name = snap.device_name or strings.APP_TITLE
             c = snap.cell
             if c is None or snap.stale:
                 lines.append(f"{name}: {strings.STATUS_TEXT.get(snap.status, snap.status)}")
-            elif len(snaps) == 1:
+            elif snap.partial:
+                lines.append(f"{name}: {c.soc}% · " + strings.BANK_PARTIAL.format(
+                    n=len(snap.offline), total=snap.members))
+            elif len(listed) == 1:
                 power, unit = strings.fmt_power(c.power)
                 lines += [name, f"SOC {c.soc}% · {strings.fmt_voltage(c.pack_voltage)} V",
                           f"{strings.fmt_current(c.current)} A · {power} {unit} · "
@@ -394,17 +595,19 @@ class Controller(QObject):
     def apply_display_mode(self) -> None:
         taskbar = self.mode == MODE_TASKBAR
         hide_widgets = taskbar or self.settings.compact_hidden or self.dashboard.isVisible()
-        several = len(self.monitors) > 1
+        views = self.views
+        several = len(views) > 1
         slot = 0
-        for i, m in enumerate(self.monitors):
-            # Numbers match the settings list (owner: several strips must be numbered).
-            number = i + 1 if several else None
-            m.strip.set_number(number)
-            m.compact.set_number(number)
-            m.strip.slot = slot  # visible strips side by side, the main BMS next to the tray
-            m.strip.set_wanted(taskbar and m.visible)
-            m.compact.setVisible(not hide_widgets and m.visible)
-            slot += m.visible
+        for v in views:
+            # Numbers match the settings list (owner: several strips must be numbered);
+            # banks are lettered.
+            number = self.label(v) if several else None
+            v.strip.set_number(number)
+            v.compact.set_number(number)
+            v.strip.slot = slot  # visible strips side by side, the first one next to the tray
+            v.strip.set_wanted(taskbar and v.visible)
+            v.compact.setVisible(not hide_widgets and v.visible)
+            slot += v.visible
 
     def set_display_mode(self, mode: str) -> None:
         if mode == MODE_TASKBAR and not self._taskbar_supported():
@@ -421,17 +624,17 @@ class Controller(QObject):
         dpr = QGuiApplication.primaryScreen().devicePixelRatio()
         return info is not None and win_taskbar.strip_geometry(info, dpr, STRIP_WIDTH, None) is not None
 
-    def expand(self, monitor: Monitor | None = None) -> None:
+    def expand(self, monitor: View | None = None) -> None:
         if monitor is not None:
-            self.set_active(self.monitors.index(monitor))
+            self.set_active(self.views.index(monitor))
         if not self.dashboard.property("placed"):
             screen = QGuiApplication.primaryScreen().availableGeometry()
             geo = self.dashboard.frameGeometry()
             geo.moveCenter(screen.center())
             self.dashboard.move(geo.topLeft())
             self.dashboard.setProperty("placed", True)
-        for m in self.monitors:
-            m.compact.hide()
+        for v in self.views:
+            v.compact.hide()
         self.dashboard.show()
         self.dashboard.raise_()
         self.dashboard.activateWindow()
@@ -441,7 +644,7 @@ class Controller(QObject):
         self.dashboard.hide()
         self.apply_display_mode()
 
-    def toggle_dashboard(self, monitor: Monitor | None = None) -> None:
+    def toggle_dashboard(self, monitor: View | None = None) -> None:
         if self.dashboard.isVisible() and (monitor is None or monitor is self.mon):
             self.collapse()
         else:
@@ -459,9 +662,9 @@ class Controller(QObject):
     def _on_strip_moved(self, offset: int) -> None:
         """One strip was dragged: the whole group moves with it."""
         self.settings.taskbar_offset = offset
-        for m in self.monitors:
-            m.strip.offset = offset
-            m.strip.reposition()
+        for v in self.views:
+            v.strip.offset = offset
+            v.strip.reposition()
         self.save_settings()
 
     @staticmethod
@@ -471,10 +674,13 @@ class Controller(QObject):
     def _restore_positions(self) -> None:
         screen = QGuiApplication.primaryScreen().availableGeometry()
         y = screen.top() + 24
-        for m in self.monitors:
-            w = m.compact
+        for v in self.views:
+            w = v.compact
             w.adjustSize()
-            pos = m.device.compact_pos if m.device else self.settings.compact_pos
+            if isinstance(v, Bank):
+                pos = v.config.compact_pos
+            else:
+                pos = v.device.compact_pos if v.device else self.settings.compact_pos
             if pos and self._on_screen(QRect(pos[0], pos[1], w.width(), w.height())):
                 w.move(*pos)
             else:  # default: top-right corner of the primary screen, stacked
@@ -495,13 +701,16 @@ class Controller(QObject):
             self.settings.compact_pos = [self.compact.x(), self.compact.y()]
         else:
             self.settings.set_devices([m.device for m in self.monitors if m.device])
+        for b in self.banks:
+            b.config.compact_pos = [b.compact.x(), b.compact.y()]
+        self.settings.set_banks([b.config for b in self.banks])
         if self.dashboard.property("placed"):
             g = self.dashboard.geometry()
             self.settings.dashboard_geometry = [g.x(), g.y(), g.width(), g.height()]
         self.settings.expanded = self.dashboard.isVisible()
 
     # ----- menu (tray, widgets, strips and dashboard share it) ------------------
-    def show_menu(self, pos: QPoint, monitor: Monitor | None = None) -> None:
+    def show_menu(self, pos: QPoint, monitor: View | None = None) -> None:
         # Right-click on a strip / widget: the menu starts with that BMS's items.
         self._menu_monitor = monitor
         self.menu.popup(pos)  # aboutToShow fills it
@@ -526,14 +735,19 @@ class Controller(QObject):
 
         target = getattr(self, "_menu_monitor", None)
         self._menu_monitor = None
-        if target is not None and target in self.monitors and target.device is not None:
-            index = self.monitors.index(target)
-            title = add(f"{index + 1}. {target.device_name or target.address}", lambda: None,
-                        enabled=False)
+        is_bank = isinstance(target, Bank) and target in self.banks
+        if is_bank or (target in self.monitors and target.device is not None):
+            vi = self.views.index(target)
+            title = add(f"{self.label(target)}. {target.device_name or target.address}",
+                        lambda: None, enabled=False)
             title.setFont(QFont(theme.FONT_FAMILY, 9, QFont.Bold))
-            add(strings.MENU_HIDE_BMS, lambda i=index: self.set_visible(i, False))
-            add(strings.MENU_REMOVE_BMS, lambda i=index: self.remove_bms(i),
-                enabled=len(self.monitors) > 1 and not self.replay)
+            add(strings.MENU_HIDE_BMS, lambda vi=vi: self.set_view_visible(vi, False))
+            if is_bank:
+                add(strings.MENU_REMOVE_BANK, lambda b=target: self.remove_bank(self.banks.index(b)),
+                    enabled=not self.replay)
+            else:
+                add(strings.MENU_REMOVE_BMS, lambda i=self.monitors.index(target): self.remove_bms(i),
+                    enabled=len(self.monitors) > 1 and not self.replay)
             m.addSeparator()
 
         add(strings.MENU_SETTINGS, self.open_settings)
@@ -555,12 +769,12 @@ class Controller(QObject):
         add(strings.MENU_DISCONNECT if running else strings.MENU_CONNECT, self.toggle_all_connections)
         add(strings.MENU_ADD_BMS if self.monitors[0].device else strings.MENU_PICK_BMS,
             self.add_bms if self.monitors[0].device else self.pick_bms, enabled=not self.replay)
-        if len(self.monitors) > 1:  # show / hide each BMS (also brings hidden ones back)
+        if len(self.views) > 1:  # show / hide each BMS / bank (also brings hidden ones back)
             shown = QMenu(strings.MENU_SHOWN_BMS, m)
-            for i, mon in enumerate(self.monitors):
-                add(f"{i + 1}. {mon.device_name or mon.address}",
-                    lambda i=i, mon=mon: self.set_visible(i, not mon.visible),
-                    checked=mon.visible, menu=shown)
+            for vi, v in enumerate(self.views):
+                add(f"{self.label(v)}. {v.device_name or v.address}",
+                    lambda vi=vi, v=v: self.set_view_visible(vi, not v.visible),
+                    checked=v.visible, menu=shown)
             m.addMenu(shown)
         add(strings.MENU_DIAGNOSTICS, self.open_diagnostics, enabled=not self.replay)
         add(strings.MENU_EXPORT_CSV, self.export_csv)
@@ -585,9 +799,127 @@ class Controller(QObject):
         for m in self.monitors:
             if m.device is not None:
                 brand = drivers.get(m.device.driver).name
-                rows.append((m.device_name or m.device.name or "—",
-                             f"{brand} · {m.device.address}", m.device.visible))
+                detail = f"{brand} · {m.device.address}"
+                bank = self.bank_of(m)
+                if bank is not None:
+                    detail += " · " + strings.BANK_MEMBER_OF.format(label=self.label(bank))
+                rows.append((m.device_name or m.device.name or "—", detail, m.device.visible))
         return rows
+
+    def bank_rows(self) -> list[tuple[str, str, str, bool]]:
+        """(letter, name, members text, visible) per bank, for the settings list."""
+        rows = []
+        for b in self.banks:
+            names = ", ".join(m.device_name or m.address for m in b.members)
+            detail = strings.BANK_MEMBERS_DETAIL.format(n=len(b.members), names=names)
+            rows.append((self.label(b), b.device_name,
+                         f"{strings.BANK_KIND_NAMES[b.config.kind]} · {detail}", b.visible))
+        return rows
+
+    def set_view_visible(self, index: int, visible: bool) -> None:
+        """Selector / menu eye: index into self.views (banks first)."""
+        views = self.views
+        if not 0 <= index < len(views):
+            return
+        v = views[index]
+        if isinstance(v, Bank):
+            v.config.visible = visible
+            self.save_banks()
+            self.apply_display_mode()
+        else:
+            self.set_visible(self.monitors.index(v), visible)
+
+    def save_banks(self) -> None:
+        if self.replay:
+            return
+        self.settings.set_banks([b.config for b in self.banks])
+        self.save_settings()
+        self._update_dashboard_list()
+
+    # ----- banks (several BMS in parallel = one battery) -----------------------------
+    def _bank_candidates(self, bank: Bank | None) -> list[tuple[str, str, bool]]:
+        """(address, label, checked) of BMS that may join `bank` (not in another bank)."""
+        out = []
+        for i, m in enumerate(self.monitors):
+            if m.address is None:
+                continue
+            other = self.bank_of(m)
+            if other is not None and other is not bank:
+                continue
+            out.append((m.address.upper(), f"{i + 1}. {m.device_name or m.address}",
+                        bank is not None and other is bank))
+        return out
+
+    def edit_bank(self, index: int | None = None, parent=None) -> None:
+        """Create a bank (index None) or change one: name and member BMS."""
+        from .ui.bank_dialog import BankDialog
+
+        if self.replay:
+            return
+        bank = self.banks[index] if index is not None and 0 <= index < len(self.banks) else None
+        candidates = self._bank_candidates(bank)
+        if len(candidates) < 2:
+            self._notify(strings.BANK_NEED_TWO)
+            return
+        taken = [b.config.letter for b in self.banks if b is not bank]
+        letter = bank.config.letter if bank else free_letter(taken)
+        name = bank.config.name if bank else ""
+        kind = bank.config.kind if bank else "parallel"
+        dlg = BankDialog(name, candidates, letter, taken, kind, parent)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        self.apply_bank(bank, dlg.name(), dlg.members(), dlg.letter(), dlg.kind())
+
+    def apply_bank(self, bank: "Bank | None", name: str, members: list[str],
+                   letter: str | None = None, kind: str = "parallel") -> "Bank":
+        """Store a new / changed bank (the editor's result; tests call it directly).
+
+        name "" = default name with the letter; letter None = first free one."""
+        shown = self.mon
+        taken = [b.config.letter for b in self.banks if b is not bank]
+        if letter is None or letter in taken:
+            letter = bank.config.letter if bank and bank.config.letter not in taken else free_letter(taken)
+        if bank is None:
+            bank = self._new_bank(BankConfig(uuid.uuid4().hex[:8], name, members,
+                                             letter=letter, kind=kind))
+            self.banks.append(bank)
+            # Owner's choice: one strip per bank; its BMS can be shown again by their eye.
+            for m in bank.members:
+                m.device.visible = False
+            log.info("bank created: %s %s", bank.config.id, members)
+        else:
+            for m in bank.members:  # BMS taken out of the bank get their own strip back
+                if m.address.upper() not in members:
+                    m.device.visible = True
+            bank.config.name, bank.config.members = name, members
+            bank.config.letter, bank.config.kind = letter, kind
+            log.info("bank changed: %s %s %s %s", bank.config.id, letter, kind, members)
+        self._sort_banks()
+        self.save_devices()
+        self.save_banks()
+        self._set_active_view(shown)
+        self._restore_positions()
+        self.apply_display_mode()
+        self.render()
+        return bank
+
+    def remove_bank(self, index: int) -> None:
+        """Ungroup a bank: its BMS show their own strips again (its history stays)."""
+        if not 0 <= index < len(self.banks):
+            return
+        shown = self.mon
+        b = self.banks.pop(index)
+        log.info("bank removed: %s", b.config.id)
+        b.save_history()
+        for m in b.members:
+            m.device.visible = True
+        b.close_views()
+        self._dimmed.clear()
+        self.save_devices()
+        self.save_banks()
+        self._set_active_view(shown)
+        self.apply_display_mode()
+        self.render()
 
     def set_visible(self, index: int, visible: bool) -> None:
         """Show / hide one BMS's strip and widget; its data keeps being recorded."""
@@ -599,14 +931,19 @@ class Controller(QObject):
 
     def open_settings(self) -> None:
         dlg = SettingsDialog(self.settings, autostart.is_enabled(), autostart.available(),
-                             replay=self.replay, devices=self.device_rows())
+                             replay=self.replay, devices=self.device_rows(),
+                             banks=self.bank_rows())
 
         def refresh() -> None:
             dlg.set_devices(self.device_rows())
 
         def change(index: int) -> None:
-            self.set_active(index)
-            self.pick_bms()
+            self.set_active(self.views.index(self.monitors[index]))
+            self.pick_bms(self.monitors[index])
+            refresh()
+
+        def refresh_banks() -> None:
+            dlg.set_banks(self.bank_rows())
             refresh()
 
         def mode(m: str) -> None:
@@ -617,12 +954,18 @@ class Controller(QObject):
         dlg.change_requested.connect(change)
         dlg.remove_requested.connect(lambda i: (self.remove_bms(i), refresh()))
         dlg.visibility_changed.connect(self.set_visible)
+        dlg.bank_add_requested.connect(lambda: (self.edit_bank(None, dlg), refresh_banks()))
+        dlg.bank_edit_requested.connect(lambda i: (self.edit_bank(i, dlg), refresh_banks()))
+        dlg.bank_remove_requested.connect(lambda i: (self.remove_bank(i), refresh_banks()))
+        # Banks come first in self.views, so a bank index is also its view index.
+        dlg.bank_visibility_changed.connect(self.set_view_visible)
         dlg.mode_changed.connect(mode)
         dlg.scale_changed.connect(lambda s: self.set_scale(s, restart=False))
         dlg.language_changed.connect(self.set_language)
         dlg.threshold_changed.connect(self.set_idle_threshold)
         dlg.fullscreen_changed.connect(self.set_fullscreen_behavior)
         dlg.dim_changed.connect(self.set_dim_when_maximized)
+        dlg.desktop_changed.connect(self.set_widgets_on_desktop)
         dlg.autostart_changed.connect(self.set_autostart)
         dlg.open_folder.connect(self.open_data_folder)
         dlg.diagnostics_requested.connect(self.open_diagnostics)
@@ -641,8 +984,9 @@ class Controller(QObject):
 
     def set_idle_threshold(self, value: float) -> None:
         self.settings.idle_threshold = value
-        for m in self.monitors:
-            m.tracker.idle_threshold = value
+        for v in self.views:
+            v.tracker.idle_threshold = value
+        self.dashboard.set_idle_threshold(value)
         self.save_settings()
         self.render()
 
@@ -653,13 +997,24 @@ class Controller(QObject):
         # never covers it: only dim strips in their corner position (owner's
         # report 2026-11-14: the strip greyed out for no reason).
         wanted: dict[QWidget, bool] = {}
-        for m in self.monitors:
-            wanted[m.compact] = dim
-            wanted[m.strip] = dim and m.strip.in_corner
+        for v in self.views:
+            # A widget on the desktop is under the maximized window anyway.
+            wanted[v.compact] = dim and not self.settings.widgets_on_desktop
+            wanted[v.strip] = dim and v.strip.in_corner
         if wanted != self._dimmed:
             self._dimmed = wanted
             for window, state in wanted.items():
                 set_dimmed(window, state)
+
+    def set_widgets_on_desktop(self, enabled: bool) -> None:
+        """Floating widgets: always on top, or pinned to the desktop."""
+        self.settings.widgets_on_desktop = enabled
+        self.save_settings()
+        self._dimmed.clear()
+        for v in self.views:
+            set_dimmed(v.compact, False)
+            v.compact.set_on_desktop(enabled)
+        self.update_dimming()
 
     def set_dim_when_maximized(self, enabled: bool) -> None:
         self.settings.dim_when_maximized = enabled
@@ -668,9 +1023,9 @@ class Controller(QObject):
 
     def set_fullscreen_behavior(self, behavior: str) -> None:
         self.settings.fullscreen_behavior = behavior
-        for m in self.monitors:
-            m.strip.fullscreen_behavior = behavior
-            m.strip.reposition()
+        for v in self.views:
+            v.strip.fullscreen_behavior = behavior
+            v.strip.reposition()
         self.save_settings()
 
     def set_autostart(self, enabled: bool) -> None:
@@ -680,15 +1035,28 @@ class Controller(QObject):
             log.exception("autostart change failed")
 
     # ----- user actions -----------------------------------------------------------
-    def show_alarms(self, monitor: Monitor | None = None) -> None:
+    def show_alarms(self, monitor: View | None = None) -> None:
         snap = (monitor or self.mon).snapshot()
         alarms = snap.cell.alarms if snap.cell else ()
         parent = self.dashboard if self.dashboard.isVisible() else None
         AlarmDialog(alarms, snap.stale and snap.cell is not None, parent).exec()
 
     def toggle_connection(self) -> None:
-        """Connect / disconnect the BMS shown in the dashboard."""
+        """Connect / disconnect the BMS (or every BMS of the bank) in the dashboard."""
         m = self.mon
+        if isinstance(m, Bank):
+            members = m.members
+            if any(x.running for x in members):
+                for x in members:
+                    if x.running:
+                        x.source.stop()
+            else:
+                for x in members:
+                    if x.source is not None:
+                        x.source.start()
+                    elif not self.replay:
+                        x.set_source(x.make_ble_source())
+            return
         if m.source is None:
             self.pick_bms()
         elif m.source.running:
@@ -728,11 +1096,12 @@ class Controller(QObject):
             current.source.start()
         return picked
 
-    def pick_bms(self) -> None:
-        """Choose (or replace) the BMS of the active monitor."""
+    def pick_bms(self, m: Monitor | None = None) -> None:
+        """Choose (or replace) a BMS (default: the one in the dashboard)."""
         if self.replay:
             return
-        m = self.mon
+        if m is None:
+            m = self.mon if isinstance(self.mon, Monitor) else self.monitors[0]
         r = self._pick(m)
         if r is None:
             self.render()
@@ -743,13 +1112,20 @@ class Controller(QObject):
                 m.source.start()
             return
         changed = r.address != m.address
+        bank = self.bank_of(m)
+        if changed and bank is not None:  # the new BMS takes the old one's place in its bank
+            old = (m.address or "").upper()
+            bank.config.members = [r.address.upper() if a == old else a for a in bank.config.members]
+            self.save_banks()
         if changed:
             log.info("BMS selected: %s %r (%s)", r.address, r.name, r.driver_id)
             m.save_history()  # keep the old BMS's open bucket
             m.reset_state()
         old_pos = m.device.compact_pos if m.device else self.settings.compact_pos
+        old_visible = m.device.visible if m.device else True
         # Unknown device picked via "show all": try the default driver.
-        m.device = Device(r.address, r.name, drivers.get(r.driver_id).id, None, old_pos)
+        m.device = Device(r.address, r.name, drivers.get(r.driver_id).id, None, old_pos,
+                          old_visible)
         m.device_name = r.name
         self.save_devices()
         if changed:
@@ -785,6 +1161,8 @@ class Controller(QObject):
         """Stop monitoring one BMS (its history stays in the database)."""
         if len(self.monitors) < 2 or not 0 <= index < len(self.monitors):
             return
+        shown = self.mon
+        bank = self.bank_of(self.monitors[index])
         m = self.monitors.pop(index)
         log.info("BMS removed: %s", m.address)
         m.save_history()
@@ -792,9 +1170,17 @@ class Controller(QObject):
             m.source.stop(wait_s=3.0)
         m.close_views()
         self._dimmed.clear()
-        if self.active >= len(self.monitors) or self.active == index:
-            self.active = 0
-        self.dashboard.set_history(self.mon.history)
+        if bank is not None:
+            address = (m.address or "").upper()
+            bank.config.members = [a for a in bank.config.members if a != address]
+            if len(bank.config.members) < 2:  # one BMS left: no bank any more
+                self.banks.remove(bank)
+                bank.save_history()
+                for x in bank.members:
+                    x.device.visible = True
+                bank.close_views()
+            self.save_banks()
+        self._set_active_view(shown)
         self.save_devices()
         self.apply_display_mode()
         self.render()
@@ -868,8 +1254,8 @@ class Controller(QObject):
 
     def set_low_soc(self, percent: int) -> None:
         self.settings.low_soc_threshold = percent
-        for m in self.monitors:
-            m.notifier.low_soc = percent
+        for v in self.views:
+            v.notifier.low_soc = percent
         self.save_settings()
         self.render()  # strips / widgets turn red at once
 
@@ -936,8 +1322,8 @@ class Controller(QObject):
             log.exception("history.json import failed")
 
     def save_history(self) -> None:
-        for m in self.monitors:
-            m.save_history()
+        for v in self.views:
+            v.save_history()
 
     def prune_history(self) -> None:
         if self.store is not None:

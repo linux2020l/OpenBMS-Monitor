@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import strings
+from ..bank import EXCHANGE_MIN_A, exchange_current
 from ..state import History, Snapshot, energy_kwh, local_midnight
 from . import icons, theme
 from .compact import STATE_COLORS, icon_button, value_html
@@ -139,8 +140,6 @@ class DashboardWindow(QWidget):
         self.status_text = QLabel()
         self.status_text.setStyleSheet("font-size: 12pt;")  # size hint uses the right font
         h.addWidget(self.status_text)
-        self.status_dot = StatusDot(10)
-        h.addWidget(self.status_dot)
         h.addStretch(1)
 
         self.connect_btn = QPushButton()
@@ -254,6 +253,17 @@ class DashboardWindow(QWidget):
             val.setToolTip(strings.ENERGY_TIP)
             grid.addWidget(val, k, 1)
             self.energy_rows[key] = val
+        # Banks only: current circulating between packs (it cancels in the sum).
+        self.exchange_name = muted(strings.ROW_EXCHANGE)
+        self.exchange_name.setToolTip(strings.EXCHANGE_TIP)
+        self.exchange = QLabel()
+        self.exchange.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.exchange.setStyleSheet("font-size: 11pt;")
+        row = r + len(self.energy_rows)
+        grid.addWidget(self.exchange_name, row, 0)
+        grid.addWidget(self.exchange, row, 1)
+        self.exchange_name.hide()
+        self.exchange.hide()
         v.addLayout(grid)
         v.addStretch(1)
         return panel
@@ -317,9 +327,16 @@ class DashboardWindow(QWidget):
         self.chart_controls.setVisible(index == 0)
         self.cells.update()
 
-    def set_monitors(self, names: list[str], active: int, visible: list[bool] | None = None) -> None:
-        self.selector.set_items(names, visible or [True] * len(names), active)
+    def set_monitors(self, names: list[str], active: int, visible: list[bool] | None = None,
+                     labels: list[str] | None = None) -> None:
+        self.selector.set_items(names, visible or [True] * len(names), active, labels)
         self.selector.setVisible(len(names) > 1)
+
+    def set_idle_threshold(self, amps: float) -> None:
+        """Chart colours follow the Idle threshold from the settings."""
+        if amps != self.chart.idle_threshold:
+            self.chart.idle_threshold = amps
+            self.chart.update()
 
     def set_history(self, history: History) -> None:
         """Another BMS is shown: chart and energy come from its history."""
@@ -357,11 +374,16 @@ class DashboardWindow(QWidget):
         self._snap = snap
         cell, stale = snap.cell, snap.stale
         status_color = theme.STATUS_COLORS.get(snap.status, theme.GREY)
-        upd("status", strings.STATUS_TEXT.get(snap.status, snap.status), self.status_text.setText)
+        status_text = strings.STATUS_TEXT.get(snap.status, snap.status)
+        status_tip = snap.status_detail
+        if snap.partial:  # bank: some of its BMS are not in the sums
+            status_color = theme.AMBER
+            status_text = strings.BANK_PARTIAL.format(n=len(snap.offline), total=snap.members)
+            status_tip = strings.partial_note(snap)
+        upd("status", status_text, self.status_text.setText)
         upd("status_style", status_color, lambda c: self.status_text.setStyleSheet(
             f"color: {c}; font-size: 12pt;"))
-        upd("status_tip", snap.status_detail, self.status_text.setToolTip)
-        self.status_dot.set_color(status_color)
+        upd("status_tip", status_tip, self.status_text.setToolTip)
         connected = snap.status in ("connecting", "connected", "lost", "replay")
         upd("connect", strings.MENU_DISCONNECT if connected else strings.MENU_CONNECT,
             self.connect_btn.setText)
@@ -370,7 +392,8 @@ class DashboardWindow(QWidget):
             self.ring.low = snap.low_soc
             self.ring.update()
         self.ring.set_value(None if cell is None else cell.soc, stale)
-        self.cells.set_cell(cell, stale)
+        self.cells.set_cell(cell, stale, snap.packs, continuous=snap.series)
+        self._show_exchange(snap)
 
         if cell is None:
             for t, unit in ((self.tile_current, "A"), (self.tile_power, "W"),
@@ -409,9 +432,14 @@ class DashboardWindow(QWidget):
         cells_lbl = self.rows[strings.ROW_CELLS]
         upd(f"row{strings.ROW_CELLS}", f"{cell.cell_min:.3f} – {cell.cell_max:.3f} V",
             cells_lbl.setText)
-        upd("cells_tip",
-            "\n".join(f"#{n}: {v:.3f} V" for n, v in enumerate(cell.cell_voltages, 1))
-            + f"\nΔ {delta_mv:.0f} mV", cells_lbl.setToolTip)
+        if snap.packs:  # bank: each pack's cells numbered from 1, its own spread
+            tip = "\n\n".join(
+                f"{name}\n" + "\n".join(f"#{n}: {v:.3f} V" for n, v in enumerate(c.cell_voltages, 1))
+                + f"\nΔ {(c.cell_max - c.cell_min) * 1000:.0f} mV" for name, c in snap.packs)
+        else:
+            tip = ("\n".join(f"#{n}: {v:.3f} V" for n, v in enumerate(cell.cell_voltages, 1))
+                   + f"\nΔ {delta_mv:.0f} mV")
+        upd("cells_tip", tip, cells_lbl.setToolTip)
         def flag(value: bool | None, yes: str, no: str) -> str:
             return strings.NO_VALUE if value is None else (yes if value else no)
 
@@ -424,14 +452,40 @@ class DashboardWindow(QWidget):
             self.rows[strings.ROW_MOSFETS].setText)
 
         faults = snap.fault_alarms
-        if stale:
+        if snap.missing:  # series bank: a pack has been silent too long
+            self._set_health("warning", theme.RED, strings.BANK_NO_DATA,
+                             strings.BANK_NO_DATA_SUB.format(names=", ".join(snap.missing)))
+        elif stale:
             self._set_health("warning", theme.GREY, strings.HEALTH_STALE, strings.HEALTH_STALE_SUB)
         elif faults:
             names = ", ".join(strings.alarm_text(b) for b in faults[:2])
             self._set_health("warning", theme.RED, strings.HEALTH_ALARM.format(n=len(faults)), names)
+        elif snap.partial:
+            self._set_health("warning", theme.AMBER,
+                             strings.BANK_PARTIAL.format(n=len(snap.offline), total=snap.members),
+                             strings.partial_note(snap))
         else:
             self._set_health("check", theme.GREEN, strings.HEALTH_OK, strings.HEALTH_OK_SUB)
         self.refresh_chart()
+
+    def _show_exchange(self, snap: Snapshot) -> None:
+        """Bank row: current flowing from one pack into another."""
+        upd = self.upd
+        is_bank = snap.members > 0 and not snap.series  # series: one common current
+        upd("exchange_shown", is_bank, lambda on: (self.exchange_name.setVisible(on),
+                                                   self.exchange.setVisible(on)))
+        if not is_bank:
+            return
+        amps = exchange_current([c.current for _, c in snap.packs])
+        if snap.stale or len(snap.packs) < 2 or amps < EXCHANGE_MIN_A:
+            text = strings.NO_VALUE
+        else:
+            power, unit = strings.fmt_power(amps * snap.cell.pack_voltage)
+            text = f"{amps:.1f} A · {power} {unit}"
+        upd("exchange", text, self.exchange.setText)
+        tip = "\n".join(f"{name}: {strings.fmt_current(c.current)} A" for name, c in snap.packs)
+        upd("exchange_tip", f"{strings.EXCHANGE_TIP}\n\n{tip}" if tip else strings.EXCHANGE_TIP,
+            self.exchange.setToolTip)
 
     def _set_health(self, icon_name: str, color: str, title: str, sub: str) -> None:
         upd = self.upd
