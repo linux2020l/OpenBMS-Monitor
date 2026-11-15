@@ -20,6 +20,11 @@ the negotiated MTU:
 Prefix rule used here: strip the first byte of a continuation chunk only if
 the chunk is shorter than the frame's first chunk AND that byte equals the
 BCD-encoded remaining length. The CRC check catches any wrong guess.
+
+Newer BLE modules (JK-B2A8S20P HW 19H) also send stray "AT\r\n"
+notifications, and sometimes glue one IN FRONT of a frame start: a
+128-byte chunk "41 54 0D 0A 55 AA EB 90 05 ..." (seen 2026-11-15 on a
+device-info and the logbook frame). That prefix is dropped.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from .commands import REQUEST_HEADER, checksum  # acks echo the request header
 
 RESPONSE_HEADER = bytes([0x55, 0xAA, 0xEB, 0x90])
 FRAME_SIZE = 300
+AT_PREFIX = b"AT\r\n"
 
 
 def is_valid_frame(frame: bytes) -> bool:
@@ -73,11 +79,14 @@ class FrameAssembler:
 
     def feed(self, chunk: bytes | bytearray) -> list[bytes]:
         chunk = bytes(chunk)
+        size = len(chunk)  # the prefix rule compares with the chunk as sent
+        if chunk[:8] == AT_PREFIX + RESPONSE_HEADER:
+            chunk = chunk[4:]
         if chunk[:4] == RESPONSE_HEADER:
             if self._buf is not None:
                 self.stats.aborted_frames += 1
             self._buf = bytearray(chunk)
-            self._first_chunk_size = len(chunk)
+            self._first_chunk_size = size
         elif self._buf is None:
             self.stats.dropped_chunks += 1  # e.g. a 20-byte command ack
             return []
