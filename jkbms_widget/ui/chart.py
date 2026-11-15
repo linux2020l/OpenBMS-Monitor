@@ -2,13 +2,13 @@
 
 Two panels sharing one time axis, each on its own darker rounded
 background so they read as separate charts:
-* top: SOC 0-100 %, grid every 25 %, line in PASTEL green while charging,
+* bottom (owner 2026-11-15; was on top): SOC 0-100 %, grid every 25 %, line in PASTEL green while charging,
   pastel amber while discharging, light grey at ~0 A (owner's request:
   lighter than the current colours); the area under it is filled with a
   vertical gradient in the same direction colour (owner's choice
   2026-11-15); the fill colour follows the current averaged over ~12 px,
   so standby noise around the idle threshold doesn't paint stripes;
-* bottom: |current| 0..N A in 10 A steps, coloured by direction
+* top: |current| 0..N A in 10 A steps, coloured by direction
   (green = charging, amber = discharging, grey = ~0).
 Time ticks fall on round clock times (every 5/10 min ... 1 day).
 Hovering shows a crosshair and a tooltip with time, SOC, current,
@@ -226,8 +226,10 @@ class HistoryChart(QWidget):
         left, right, top, bottom, gap = 50.0, 14.0, 8.0, 26.0, 24.0
         w = self.width() - left - right
         h = self.height() - top - bottom - gap
-        soc = QRectF(left, top, w, h * 0.55)
-        cur = QRectF(left, soc.bottom() + gap, w, h * 0.45)
+        # Current on top, SOC below it (owner: looks better with the filled
+        # SOC area at the bottom). Returned as (soc, cur) all the same.
+        cur = QRectF(left, top, w, h * 0.45)
+        soc = QRectF(left, cur.bottom() + gap, w, h * 0.55)
         return soc, cur
 
     def _x_of(self, t: float, plot: QRectF) -> float:
@@ -365,7 +367,7 @@ class HistoryChart(QWidget):
         # Shaded band across both panels, solid edges.
         band = QColor(SELECT_COLOR)
         band.setAlpha(45)
-        top, bottom = soc_rect.top(), cur_rect.bottom()
+        top, bottom = cur_rect.top(), soc_rect.bottom()
         p.setPen(Qt.NoPen)
         p.setBrush(band)
         p.drawRect(QRectF(x0, top, x1 - x0, bottom - top))
@@ -393,7 +395,7 @@ class HistoryChart(QWidget):
         ]
         if self._drag_x is None:
             rows.append((strings.SEL_CLEAR, theme.MUTED))
-        self._paint_box(p, fm, rows, (x0 + x1) / 2, soc_rect, centered=True)
+        self._paint_box(p, fm, rows, (x0 + x1) / 2, cur_rect, centered=True)
 
     def _paint_box(self, p, fm, rows, x, plot, centered=False) -> None:
         """Rounded tooltip box at the top of `plot`, next to / centred on x."""
@@ -471,7 +473,7 @@ class HistoryChart(QWidget):
 
         # Crosshair across both panels + markers on the lines.
         p.setPen(QPen(QColor(theme.MUTED), 1, Qt.DashLine))
-        p.drawLine(QPointF(px, soc_rect.top()), QPointF(px, cur_rect.bottom()))
+        p.drawLine(QPointF(px, cur_rect.top()), QPointF(px, soc_rect.bottom()))
         color = _direction_color(pt.current, self.idle_threshold)
         soc_color = _soc_color(pt.current, self.idle_threshold)
         for y, c in ((soc_y(pt), soc_color), (cur_y(pt), color)):
@@ -494,7 +496,7 @@ class HistoryChart(QWidget):
              (f"{abs(power):.0f} W" if power is not None else strings.NO_VALUE), theme.TEXT),
             (strings.SEL_HINT, theme.MUTED),
         ]
-        self._paint_box(p, fm, rows, px, soc_rect)
+        self._paint_box(p, fm, rows, px, cur_rect)
 
     # ----- mouse ------------------------------------------------------------
     def mousePressEvent(self, event) -> None:
