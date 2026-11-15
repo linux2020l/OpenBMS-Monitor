@@ -84,6 +84,11 @@ class Snapshot:
     status: str = "stopped"  # connection status code
     status_detail: str = ""
     device_name: str = ""  # BLE name from the device-info frame
+    low_soc: int = 19  # user's low-charge threshold, % (red SOC at or below it)
+
+    @property
+    def is_low(self) -> bool:
+        return self.cell is not None and not self.stale and self.cell.soc <= self.low_soc
 
     @property
     def fault_alarms(self) -> tuple[str, ...]:

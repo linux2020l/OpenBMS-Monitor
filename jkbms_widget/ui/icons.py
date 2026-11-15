@@ -114,6 +114,15 @@ def pixmap(name: str, color: str, size: int = 24) -> QPixmap:
         p.setBrush(c)
         for x, h in ((3, 7), (9.5, 12), (16, 18)):
             p.drawRoundedRect(QRectF(x, 21 - h, 4.5, h), 1.5, 1.5)
+    elif name in ("eye", "eye_off"):  # shown / hidden on the taskbar
+        path = QPainterPath()
+        path.moveTo(2, 12)
+        path.quadTo(12, 2.5, 22, 12)
+        path.quadTo(12, 21.5, 2, 12)
+        p.drawPath(path)
+        p.drawEllipse(QPointF(12, 12), 3.2, 3.2)
+        if name == "eye_off":
+            p.drawLine(QPointF(4, 20), QPointF(20, 4))
     p.end()
     return pm
 

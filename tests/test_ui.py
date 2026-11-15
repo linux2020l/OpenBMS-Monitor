@@ -6,9 +6,11 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PySide6.QtCore import QPoint  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QToolButton  # noqa: E402
 
-from jkbms_widget.app import MODE_TASKBAR, MODE_WIDGET, Controller  # noqa: E402
+from jkbms_widget import strings  # noqa: E402
+from jkbms_widget.app import MODE_TASKBAR, MODE_WIDGET, Controller, Monitor  # noqa: E402
 from jkbms_widget.capture import read_capture  # noqa: E402
 from jkbms_widget.drivers.jk.parser import CellInfo, Decoder, DeviceInfo  # noqa: E402
 from jkbms_widget.settings import Settings  # noqa: E402
@@ -345,3 +347,173 @@ def test_notifications_go_through_the_controller(app, cells, monkeypatch):
     ctl.notifier.low_soc = 50  # would fire again if enabled
     src.cell_info.emit(dataclasses.replace(cells[0], soc=40))
     assert shown == ["low_soc"]
+
+
+def test_two_bms_each_with_own_views_and_dashboard_switch(app, cells, monkeypatch):
+    import dataclasses
+
+    from jkbms_widget.ble import ScanResult
+
+    settings = Settings(address="AA:01", bms_name="Main",
+                        extra_devices=[{"address": "AA:02", "name": "Second"}],
+                        display_mode=MODE_TASKBAR)
+    ctl = Controller(settings)
+    notes = []
+    monkeypatch.setattr(ctl, "_notify", notes.append)  # no modal box without a tray
+    assert [m.address for m in ctl.monitors] == ["AA:01", "AA:02"]
+    sources = [FakeSource(), FakeSource()]
+    for m, s in zip(ctl.monitors, sources):
+        m.set_source(s)
+        s.status.emit("replay", "fixture")
+    sources[0].cell_info.emit(dataclasses.replace(cells[0], soc=80))
+    sources[1].cell_info.emit(dataclasses.replace(cells[0], soc=30))
+    first, second = ctl.monitors
+    assert first.strip.snap.cell.soc == 80 and second.strip.snap.cell.soc == 30
+    ctl.apply_display_mode()
+    assert (first.strip.slot, second.strip.slot) == (0, 1)
+
+    ctl.expand(second)  # click on the second strip
+    assert ctl.active == 1 and ctl.dashboard.history is second.history
+    assert ctl.dashboard.selector.isVisibleTo(ctl.dashboard)
+    assert ctl.dashboard.ring.soc == 30
+    ctl.set_active(0)
+    assert ctl.dashboard.history is first.history
+
+    # Add a third BMS through the picker, then remove the second one.
+    monkeypatch.setattr(ctl, "_pick", lambda current: ScanResult("AA:03", "Third", -60, "jk"))
+    monkeypatch.setattr(Monitor, "make_ble_source", lambda self: FakeSource())
+    ctl.add_bms()
+    assert [m.address for m in ctl.monitors] == ["AA:01", "AA:02", "AA:03"]
+    assert [d.address for d in settings.devices()] == ["AA:01", "AA:02", "AA:03"]
+    ctl.add_bms()  # the same BMS again: refused
+    assert len(ctl.monitors) == 3 and notes == [strings.BMS_ALREADY]
+    ctl.remove_bms(1)
+    assert [m.address for m in ctl.monitors] == ["AA:01", "AA:03"]
+    assert [d.name for d in settings.devices()] == ["Main", "Third"]
+    assert ctl.monitors[1].strip.slot == 1  # moved into the free slot
+    ctl.remove_bms(0)
+    ctl.remove_bms(0)  # the last BMS can't be removed
+    assert len(ctl.monitors) == 1
+    ctl.shutdown()
+
+
+def test_strip_slots_sit_side_by_side():
+    from jkbms_widget.ui.taskbar_strip import SLOT_GAP, STRIP_WIDTH, TaskbarStrip
+    from jkbms_widget.win_taskbar import TaskbarInfo
+
+    info = TaskbarInfo(0, 1392, 2560, 1440, 3, 2340, False)
+    s = TaskbarStrip()
+    assert s._effective_offset(info) is None  # first strip: default place
+    s.slot = 1
+    default = s._effective_offset(info) - (STRIP_WIDTH + SLOT_GAP)
+    s.offset = 100
+    assert s._effective_offset(info) == 100 + STRIP_WIDTH + SLOT_GAP
+    assert default > 0
+
+
+def test_hidden_bms_keeps_recording_and_strips_are_numbered(app, cells):
+    import dataclasses
+
+    from jkbms_widget.ui.settings_dialog import SettingsDialog
+
+    settings = Settings(address="AA:01", bms_name="Main", display_mode=MODE_TASKBAR,
+                        extra_devices=[{"address": "AA:02", "name": "Second"},
+                                       {"address": "AA:03", "name": "Third"}])
+    ctl = Controller(settings)
+    sources = [FakeSource() for _ in ctl.monitors]
+    for m, s in zip(ctl.monitors, sources):
+        m.set_source(s)
+        s.status.emit("replay", "x")
+    ctl.apply_display_mode()
+    assert [m.strip.number for m in ctl.monitors] == [1, 2, 3]
+    assert [m.compact.number.text() for m in ctl.monitors] == ["1", "2", "3"]
+
+    ctl.set_visible(1, False)  # the eye in the settings list / "Hide from the taskbar"
+    first, second, third = ctl.monitors
+    assert not second.strip.wanted and first.strip.wanted and third.strip.wanted
+    assert (first.strip.slot, third.strip.slot) == (0, 1)  # no gap for the hidden one
+    assert third.strip.number == 3  # numbers stay those of the list
+    assert settings.devices()[1].visible is False
+    sources[1].cell_info.emit(dataclasses.replace(cells[0], soc=42))
+    assert second.cell.soc == 42  # hidden, but still connected and recording
+    assert second.history.open_bucket() is not None
+
+    ctl.show_menu(QPoint(0, 0), third)  # right-click on the third strip
+    ctl.menu.close()
+    ctl._menu_monitor = third
+    ctl.populate_menu()
+    texts = [a.text() for a in ctl.menu.actions()]
+    assert texts[0] == "3. Third" and strings.MENU_HIDE_BMS in texts
+    assert strings.MENU_REMOVE_BMS in texts
+
+    dlg = SettingsDialog(settings, False, False, devices=ctl.device_rows())
+    flips = []
+    dlg.visibility_changed.connect(lambda i, on: flips.append((i, on)))
+    eye = dlg.devices.itemWidget(dlg.devices.item(1)).findChild(QToolButton)
+    assert not eye.isChecked()
+    eye.click()
+    assert flips == [(1, True)]
+    ctl.shutdown()
+
+
+def test_dashboard_selector_switches_and_hides_from_its_menu(app):
+    settings = Settings(address="AA:01", bms_name="Main",
+                        extra_devices=[{"address": "AA:02", "name": "Second"}])
+    ctl = Controller(settings)
+    for m in ctl.monitors:
+        m.set_source(FakeSource())
+    sel = ctl.dashboard.selector
+    assert sel.text().startswith("1. Main")
+    sel._fill()
+    rows = [a.defaultWidget() for a in sel.menu_.actions()]
+    assert len(rows) == 2
+    rows[1].findChild(QToolButton).click()  # eye of the second BMS: hide it
+    assert ctl.monitors[1].visible is False and settings.devices()[1].visible is False
+    rows[1].findChild(QPushButton).click()  # its name: show it in the dashboard
+    assert ctl.active == 1 and sel.text().startswith("2. Second")
+    ctl.shutdown()
+
+
+def test_selector_second_click_closes_instead_of_reopening(app):
+    import time
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    from jkbms_widget.ui.bms_selector import BmsSelector
+
+    sel = BmsSelector()
+    sel.set_items(["Main", "Second"], [True, True], 0)
+    opened = []
+    sel._open = lambda: opened.append(1)
+    sel.clicked.disconnect()
+    sel.clicked.connect(lambda: sel._open())
+    sel.resize(160, 30)
+    sel._hidden_at = time.monotonic()  # the menu was just closed by this press
+    QTest.mouseClick(sel, Qt.LeftButton)
+    assert opened == []
+    sel._hidden_at = time.monotonic() - 1.0  # a later, ordinary click opens it
+    QTest.mouseClick(sel, Qt.LeftButton)
+    assert opened == [1]
+
+
+def test_low_soc_threshold_colours_views_and_balancing_row(app, cells):
+    import dataclasses
+
+    from jkbms_widget.ui import theme
+
+    ctl, src = make_controller(display_mode=MODE_WIDGET, low_soc_threshold=60)
+    monkey = []
+    ctl._toast = lambda event, snap: monkey.append(event.kind)
+    src.status.emit("replay", "fixture")
+    src.cell_info.emit(dataclasses.replace(cells[0], soc=55, balancing=False))
+    snap = ctl.snapshot()
+    assert snap.is_low and snap.low_soc == 60
+    assert theme.RED in ctl.compact.soc.text()  # widget SOC turns red at the threshold
+    assert strings.LOW_SOC_STATE.format(t=60) in ctl.strip.icon_tooltip()
+    ctl.expand()
+    assert ctl.dashboard.rows[strings.ROW_BALANCING].text() == strings.NO_VALUE
+    src.cell_info.emit(dataclasses.replace(cells[0], soc=55, balancing=True))
+    assert ctl.dashboard.rows[strings.ROW_BALANCING].text() == strings.BALANCING_ACTIVE
+    ctl.set_low_soc(50)
+    assert not ctl.snapshot().is_low and theme.RED not in ctl.compact.soc.text()

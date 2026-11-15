@@ -87,6 +87,13 @@ QDoubleSpinBox, QSpinBox {{
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button,
 QSpinBox::up-button, QSpinBox::down-button {{ width: 0px; border: none; }}
 QComboBox:hover, QDoubleSpinBox:hover, QSpinBox:hover {{ border-color: {GREY}; }}
+QTabWidget::pane {{ border: none; border-top: 1px solid {CARD_BORDER}; }}
+QTabBar::tab {{
+    background: transparent; color: {MUTED}; padding: 6px 14px; margin-right: 4px;
+    border: none; border-bottom: 2px solid transparent;
+}}
+QTabBar::tab:hover {{ color: {TEXT}; }}
+QTabBar::tab:selected {{ color: {TEXT}; border-bottom: 2px solid {BLUE}; }}
 QComboBox QAbstractItemView {{
     background: {CARD}; border: 1px solid {CARD_BORDER}; selection-background-color: {HOVER};
 }}
@@ -150,8 +157,10 @@ def apply_style(app) -> None:
     app.setStyleSheet(STYLESHEET + extra)
 
 
-def soc_color(soc: float) -> str:
-    if soc < 20:
+def soc_color(soc: float, low_threshold: float = 19) -> str:
+    """Red at or below the user's low-charge threshold (settings), amber
+    below 50 %, green otherwise."""
+    if soc <= low_threshold:
         return RED
     if soc < 50:
         return AMBER

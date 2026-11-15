@@ -294,6 +294,28 @@ EXPORT_EMPTY = "Історія порожня, нема чого експорт�
 SECTION_DATA = "ДАНІ"
 LOW_SOC_TIP = "Від 5 до 100 %. Сповіщення приходить, коли заряд падає до цього значення або нижче."
 
+# Several BMS (settings tabs, BMS list, dashboard selector)
+SETTINGS_TAB_BMS = "BMS"
+SETTINGS_TAB_DISPLAY = "Відображення"
+SETTINGS_TAB_ALERTS = "Стан і сповіщення"
+SETTINGS_TAB_SYSTEM = "Система"
+BMS_ADD = "Додати…"
+BMS_REMOVE = "Прибрати"
+BMS_MAIN_MARK = "(головна)"
+BMS_LIST_NOTE = ("Кожна BMS має свою смужку на панелі завдань або свій віджет. Головна BMS "
+                 "показується в значку в треї. Історію прибраної BMS не видаляємо.")
+BMS_ALREADY = "Ця BMS уже є в списку."
+MENU_ADD_BMS = "Додати BMS…"
+DASH_SELECT_TIP = "Яку BMS показувати"
+
+MENU_HIDE_BMS = "Сховати з панелі"
+MENU_REMOVE_BMS = "Прибрати цю BMS"
+MENU_SHOWN_BMS = "Показувати на панелі"
+TIP_EYE = "Показувати смужку / віджет цієї BMS. Дані й графік записуються завжди."
+
+LOW_SOC_STATE = "Низький заряд (поріг {t}%)"
+BALANCING_ACTIVE = "Активне"
+
 # ----- language switching ---------------------------------------------------------
 def _text_names() -> list[str]:
     return [n for n in globals() if n.isupper() and not n.startswith("_") and n != "LANGUAGES"]

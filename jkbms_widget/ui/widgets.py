@@ -115,6 +115,7 @@ class SocRing(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.soc: float | None = None
+        self.low = 19  # red at or below (user's low-charge threshold)
         self.stale = True
         self.setMinimumSize(180, 180)
 
@@ -138,7 +139,7 @@ class SocRing(QWidget):
         p.drawArc(rect, 0, 360 * 16)
 
         soc = self.soc
-        color = theme.GREY if (self.stale or soc is None) else theme.soc_color(soc)
+        color = theme.GREY if (self.stale or soc is None) else theme.soc_color(soc, self.low)
         if soc:
             p.setPen(QPen(QColor(color), thick, Qt.SolidLine, Qt.RoundCap))
             # Qt angles: 1/16 degree, 0 = 3 o'clock, positive = counter-clockwise.

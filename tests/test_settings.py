@@ -66,3 +66,26 @@ def test_notification_settings_are_sanitized(tmp_path):
     s = Settings.load(path)
     assert s.low_soc_threshold == 100 and s.notify_enabled is False
     assert Settings().low_soc_threshold == 20 and Settings().notify_enabled is True
+
+
+def test_devices_main_plus_extras_round_trip(tmp_path):
+    from jkbms_widget.settings import Device
+
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({
+        "address": "C8:47:80:1A:F9:9E", "bms_name": "LFP 3.8kWh",
+        "extra_devices": [{"address": "c8:47:80:7a:dc:b3", "name": "LFP-4kWh", "bogus": 1},
+                          {"address": "C8:47:80:1A:F9:9E"},  # duplicate of the main one
+                          {"name": "no address"}, "junk"],
+    }), encoding="utf-8")
+    s = Settings.load(path)
+    devs = s.devices()
+    assert [d.address for d in devs] == ["C8:47:80:1A:F9:9E", "C8:47:80:7A:DC:B3"]
+    assert devs[1].name == "LFP-4kWh" and devs[1].driver == "jk"
+    # Removing the main BMS promotes the next one.
+    s.set_devices(devs[1:])
+    assert s.address == "C8:47:80:7A:DC:B3" and s.extra_devices == []
+    s.set_devices([])
+    assert s.address is None and s.devices() == []
+    s.set_devices([Device("AA:01", "A"), Device("AA:02", "B")])
+    assert [d.name for d in s.devices()] == ["A", "B"]

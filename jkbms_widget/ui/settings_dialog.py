@@ -1,8 +1,8 @@
-"""Settings window (gear button). Every change is applied immediately."""
+"""Settings window (gear button), in tabs. Every change is applied immediately."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -13,15 +13,20 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QRadioButton,
     QSpinBox,
+    QTabWidget,
+    QToolButton,
     QVBoxLayout,
+    QWidget,
 )
 
 from .. import strings
 from ..settings import Settings
-from . import theme
+from . import icons, theme
 from .compact import icon_button
 from .widgets import DragMover, rounded_corners
 
@@ -42,8 +47,22 @@ def _note(text: str) -> QLabel:
     return lbl
 
 
+def _page() -> tuple[QWidget, QVBoxLayout]:
+    page = QWidget()
+    lay = QVBoxLayout(page)
+    lay.setContentsMargins(4, 12, 4, 4)
+    lay.setSpacing(10)
+    return page, lay
+
+
 class SettingsDialog(QDialog):
-    pick_requested = Signal()
+    """Settings in tabs (owner's choice 2026-11-15: the single page got taller
+    than a 1080p screen at 150 %). Every change is applied immediately."""
+
+    add_requested = Signal()
+    change_requested = Signal(int)  # index in the BMS list
+    remove_requested = Signal(int)
+    visibility_changed = Signal(int, bool)  # eye toggle: show this BMS's strip / widget
     mode_changed = Signal(str)  # "widget" / "taskbar"
     scale_changed = Signal(float)
     language_changed = Signal(str)  # "auto" / "uk" / "en"
@@ -58,12 +77,14 @@ class SettingsDialog(QDialog):
     low_soc_changed = Signal(int)
 
     def __init__(self, settings: Settings, autostart_on: bool, autostart_available: bool,
-                 replay: bool = False, parent=None) -> None:
+                 replay: bool = False, devices: list[tuple[str, str, bool]] | None = None,
+                 parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(strings.SETTINGS_TITLE)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         rounded_corners(self)
-        self.setMinimumWidth(440)
+        self.setMinimumWidth(480)
+        self.replay = replay
 
         root = QFrame(objectName="root")
         outer = QVBoxLayout(self)
@@ -87,31 +108,34 @@ class SettingsDialog(QDialog):
         lay.addWidget(header)
         DragMover(self).attach(header)
 
-        # --- BMS --------------------------------------------------------------
-        lay.addWidget(_section(strings.SECTION_BMS))
-        bms_row = QHBoxLayout()
-        bms_col = QVBoxLayout()
-        bms_col.setSpacing(0)
-        self.bms_name = QLabel()
-        self.bms_name.setStyleSheet("font-size: 11pt; font-weight: 600;")
-        self.bms_addr = QLabel()
-        self.bms_addr.setProperty("muted", True)
-        bms_col.addWidget(self.bms_name)
-        bms_col.addWidget(self.bms_addr)
-        bms_row.addLayout(bms_col, 1)
-        change = QPushButton(strings.BMS_CHANGE)
-        change.setProperty("secondary", True)
-        change.setEnabled(not replay)
-        change.clicked.connect(self.pick_requested)
-        bms_row.addWidget(change)
-        lay.addLayout(bms_row)
-        if replay:
-            lay.addWidget(_note(strings.REPLAY_NOTE))
-        self.set_bms(settings.bms_name, settings.address)
-        lay.addWidget(QFrame(objectName="line"))
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        lay.addWidget(self.tabs, 1)
 
-        # --- Display ----------------------------------------------------------
-        lay.addWidget(_section(strings.SECTION_DISPLAY))
+        # --- BMS ----------------------------------------------------------------
+        page, p = _page()
+        self.devices = QListWidget()
+        self.devices.setMinimumHeight(150)
+        self.devices.itemSelectionChanged.connect(self._update_buttons)
+        p.addWidget(self.devices, 1)
+        row = QHBoxLayout()
+        self.add_btn = QPushButton(strings.BMS_ADD)
+        self.change_btn = QPushButton(strings.BMS_CHANGE)
+        self.remove_btn = QPushButton(strings.BMS_REMOVE)
+        for b in (self.add_btn, self.change_btn, self.remove_btn):
+            b.setProperty("secondary", True)
+            row.addWidget(b)
+        row.addStretch(1)
+        self.add_btn.clicked.connect(self.add_requested)
+        self.change_btn.clicked.connect(lambda: self.change_requested.emit(self._row()))
+        self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self._row()))
+        p.addLayout(row)
+        p.addWidget(_note(strings.REPLAY_NOTE if replay else strings.BMS_LIST_NOTE))
+        self.tabs.addTab(page, strings.SETTINGS_TAB_BMS)
+        self.set_devices(devices or [])
+
+        # --- Display ------------------------------------------------------------
+        page, p = _page()
         self.mode_group = QButtonGroup(self)
         self.mode_buttons: dict[str, QRadioButton] = {}
         for mode, text in (("widget", strings.MODE_WIDGET), ("taskbar", strings.MODE_TASKBAR)):
@@ -119,7 +143,7 @@ class SettingsDialog(QDialog):
             self.mode_group.addButton(rb)
             self.mode_buttons[mode] = rb
             rb.toggled.connect(lambda on, m=mode: on and self.mode_changed.emit(m))
-            lay.addWidget(rb)
+            p.addWidget(rb)
         self.set_mode(settings.display_mode)
 
         grid = QGridLayout()
@@ -150,17 +174,18 @@ class SettingsDialog(QDialog):
         self.language.currentIndexChanged.connect(
             lambda i: self.language_changed.emit(self.language.itemData(i)))
         grid.addWidget(self.language, 2, 1, Qt.AlignRight)
-        lay.addLayout(grid)
-        lay.addWidget(_note(strings.SCALE_NOTE))
+        p.addLayout(grid)
+        p.addWidget(_note(strings.SCALE_NOTE))
         self.dim = QCheckBox(strings.DIM_LABEL)
         self.dim.setChecked(settings.dim_when_maximized)
         self.dim.toggled.connect(self.dim_changed)
-        lay.addWidget(self.dim)
-        lay.addWidget(_note(strings.DIM_NOTE))
-        lay.addWidget(QFrame(objectName="line"))
+        p.addWidget(self.dim)
+        p.addWidget(_note(strings.DIM_NOTE))
+        p.addStretch(1)
+        self.tabs.addTab(page, strings.SETTINGS_TAB_DISPLAY)
 
-        # --- Battery ----------------------------------------------------------
-        lay.addWidget(_section(strings.SECTION_BATTERY))
+        # --- Battery state + notifications ----------------------------------------
+        page, p = _page()
         row = QHBoxLayout()
         row.addWidget(QLabel(strings.IDLE_LABEL), 1)
         self.threshold = QDoubleSpinBox()
@@ -175,14 +200,15 @@ class SettingsDialog(QDialog):
         self.threshold.setValue(settings.idle_threshold)
         self.threshold.valueChanged.connect(self.threshold_changed)
         row.addWidget(self.threshold)
-        lay.addLayout(row)
-        lay.addWidget(_note(strings.IDLE_NOTE))
+        p.addLayout(row)
+        p.addWidget(_note(strings.IDLE_NOTE))
+        p.addWidget(QFrame(objectName="line"))
 
         self.notify = QCheckBox(strings.NOTIFY_LABEL)
         self.notify.setChecked(settings.notify_enabled)
         self.notify.toggled.connect(self.notify_changed)
-        lay.addWidget(self.notify)
-        lay.addWidget(_note(strings.NOTIFY_NOTE))
+        p.addWidget(self.notify)
+        p.addWidget(_note(strings.NOTIFY_NOTE))
         low_row = QHBoxLayout()
         low_label = QLabel(strings.LOW_SOC_LABEL)
         low_label.setToolTip(strings.LOW_SOC_TIP)
@@ -197,28 +223,28 @@ class SettingsDialog(QDialog):
         self.notify.toggled.connect(self.low_soc.setEnabled)
         self.low_soc.valueChanged.connect(self.low_soc_changed)
         low_row.addWidget(self.low_soc)
-        lay.addLayout(low_row)
-        lay.addWidget(QFrame(objectName="line"))
+        p.addLayout(low_row)
+        p.addStretch(1)
+        self.tabs.addTab(page, strings.SETTINGS_TAB_ALERTS)
 
-        # --- System -----------------------------------------------------------
-        lay.addWidget(_section(strings.SECTION_SYSTEM))
+        # --- System + data ------------------------------------------------------
+        page, p = _page()
         self.autostart = QCheckBox(strings.MENU_AUTOSTART)
         self.autostart.setChecked(autostart_on)
         self.autostart.setEnabled(autostart_available)
         if not autostart_available:
             self.autostart.setToolTip(strings.TIP_AUTOSTART_DEV)
         self.autostart.toggled.connect(self.autostart_changed)
-        lay.addWidget(self.autostart)
+        p.addWidget(self.autostart)
         if not autostart_available:
-            lay.addWidget(_note(strings.TIP_AUTOSTART_DEV))
+            p.addWidget(_note(strings.TIP_AUTOSTART_DEV))
         folder = QPushButton(strings.MENU_SETTINGS_FOLDER)
         folder.setProperty("secondary", True)
         folder.clicked.connect(self.open_folder)
-        lay.addWidget(folder, 0, Qt.AlignLeft)
-        lay.addWidget(QFrame(objectName="line"))
-
-        # --- Data (also in the right-click menu, which is easy to miss) -------
-        lay.addWidget(_section(strings.SECTION_DATA))
+        p.addWidget(folder, 0, Qt.AlignLeft)
+        p.addWidget(QFrame(objectName="line"))
+        # Data tools (also in the right-click menu, which is easy to miss).
+        p.addWidget(_section(strings.SECTION_DATA))
         export = QPushButton(strings.MENU_EXPORT_CSV)
         export.setProperty("secondary", True)
         export.clicked.connect(self.export_requested)
@@ -230,17 +256,69 @@ class SettingsDialog(QDialog):
         tools.addWidget(export)
         tools.addWidget(diag)
         tools.addStretch(1)
-        lay.addLayout(tools)
+        p.addLayout(tools)
+        p.addStretch(1)
+        self.tabs.addTab(page, strings.SETTINGS_TAB_SYSTEM)
 
-        lay.addSpacing(6)
+        lay.addSpacing(4)
         done = QPushButton(strings.SETTINGS_DONE)
         done.setProperty("primary", True)
         done.clicked.connect(self.accept)
         lay.addWidget(done, 0, Qt.AlignRight)
 
-    def set_bms(self, name: str, address: str | None) -> None:
-        self.bms_name.setText(name or (strings.BMS_NOT_SET if not address else "—"))
-        self.bms_addr.setText(address or "")
+    # ----- BMS list -------------------------------------------------------------
+    def set_devices(self, devices: list[tuple[str, str, bool]]) -> None:
+        """(name, detail, visible) per BMS; the first one is the main BMS."""
+        row = self._row()
+        self.devices.clear()
+        several = len(devices) > 1
+        for i, (name, detail, visible) in enumerate(devices):
+            item = QListWidgetItem()
+            self.devices.addItem(item)
+            line = QWidget()
+            h = QHBoxLayout(line)
+            h.setContentsMargins(8, 6, 6, 6)
+            text = QLabel(f"{f'{i + 1}. ' if several else ''}{name}"
+                          f"{'  ' + strings.BMS_MAIN_MARK if i == 0 and several else ''}\n{detail}")
+            text.setAttribute(Qt.WA_TransparentForMouseEvents)  # clicks select the row
+            h.addWidget(text, 1)
+            eye = QToolButton()
+            eye.setIconSize(QSize(22, 22))
+            eye.setFixedSize(34, 34)
+            eye.setCheckable(True)
+            eye.setChecked(visible)
+            eye.setToolTip(strings.TIP_EYE)
+            eye.setIcon(icons.icon("eye" if visible else "eye_off",
+                                   theme.TEXT if visible else theme.MUTED, 20))
+            eye.setEnabled(not self.replay)
+            eye.toggled.connect(lambda on, i=i, b=eye: self._eye(i, on, b))
+            h.addWidget(eye)
+            # Explicit height: the size hint is computed before the list's
+            # stylesheet padding applies, which clipped the second text line.
+            line.setMinimumHeight(54)
+            item.setSizeHint(QSize(0, 62))
+            self.devices.setItemWidget(item, line)
+        if not devices:
+            self.devices.addItem(QListWidgetItem(strings.BMS_NOT_SET))
+            self.devices.item(0).setFlags(Qt.NoItemFlags)
+        elif 0 <= row < len(devices):
+            self.devices.setCurrentRow(row)
+        self._count = len(devices)
+        self._update_buttons()
+
+    def _eye(self, index: int, on: bool, button: QToolButton) -> None:
+        button.setIcon(icons.icon("eye" if on else "eye_off", theme.TEXT if on else theme.MUTED, 20))
+        self.visibility_changed.emit(index, on)
+
+    def _row(self) -> int:
+        items = self.devices.selectedItems()
+        return self.devices.row(items[0]) if items else -1
+
+    def _update_buttons(self) -> None:
+        selected = self._row() >= 0 and self._count > 0
+        self.add_btn.setEnabled(not self.replay)
+        self.change_btn.setEnabled(selected and not self.replay)
+        self.remove_btn.setEnabled(selected and self._count > 1 and not self.replay)
 
     def set_mode(self, mode: str) -> None:
         """Reflect the effective mode (the controller may refuse 'taskbar')."""

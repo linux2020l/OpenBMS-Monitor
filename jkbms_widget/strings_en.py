@@ -227,3 +227,25 @@ EXPORT_EMPTY = "The history is empty, nothing to export."
 
 SECTION_DATA = "DATA"
 LOW_SOC_TIP = "5 to 100 %. The notification comes when the charge drops to this value or below."
+
+# Several BMS (settings tabs, BMS list, dashboard selector)
+SETTINGS_TAB_BMS = "BMS"
+SETTINGS_TAB_DISPLAY = "Display"
+SETTINGS_TAB_ALERTS = "State & alerts"
+SETTINGS_TAB_SYSTEM = "System"
+BMS_ADD = "Add…"
+BMS_REMOVE = "Remove"
+BMS_MAIN_MARK = "(main)"
+BMS_LIST_NOTE = ("Each BMS gets its own strip on the taskbar or its own widget. The main BMS "
+                 "is shown in the tray icon. A removed BMS keeps its history.")
+BMS_ALREADY = "This BMS is already in the list."
+MENU_ADD_BMS = "Add BMS…"
+DASH_SELECT_TIP = "Which BMS to show"
+
+MENU_HIDE_BMS = "Hide from the taskbar"
+MENU_REMOVE_BMS = "Remove this BMS"
+MENU_SHOWN_BMS = "Show on the taskbar"
+TIP_EYE = "Show this BMS's strip / widget. Data and the chart are always recorded."
+
+LOW_SOC_STATE = "Low charge (threshold {t}%)"
+BALANCING_ACTIVE = "Active"

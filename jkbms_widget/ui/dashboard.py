@@ -21,7 +21,8 @@ from PySide6.QtWidgets import (
 from .. import strings
 from ..state import History, Snapshot, energy_kwh, local_midnight
 from . import icons, theme
-from .compact import STATE_COLORS, alarm_button_style, icon_button, value_html
+from .compact import STATE_COLORS, icon_button, value_html
+from .bms_selector import BmsSelector
 from .cells import CellsView
 from .chart import CHARGE_COLOR, DISCHARGE_COLOR, ZERO_COLOR, HistoryChart
 from .widgets import DragMover, SocRing, StatusDot, Updater, rounded_corners
@@ -73,6 +74,8 @@ class DashboardWindow(QWidget):
     toggle_connection = Signal()
     quit_requested = Signal()
     context_menu = Signal(QPoint)
+    monitor_selected = Signal(int)  # several BMS: which one to show
+    visibility_toggled = Signal(int, bool)  # eye in the selector: show its strip / widget
 
     def __init__(self, history: History) -> None:
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint)
@@ -117,6 +120,13 @@ class DashboardWindow(QWidget):
         title = QLabel(strings.APP_TITLE)
         title.setStyleSheet("font-size: 14pt; font-weight: 600;")
         h.addWidget(title)
+        # BMS selector, only shown when several BMS are monitored.
+        self.selector = BmsSelector()
+        self.selector.selected.connect(self.monitor_selected)
+        self.selector.visibility_toggled.connect(self.visibility_toggled)
+        self.selector.hide()
+        h.addSpacing(8)
+        h.addWidget(self.selector)
         sep = QFrame()
         sep.setFixedSize(1, 24)
         sep.setStyleSheet(f"background: {theme.CARD_BORDER};")
@@ -198,6 +208,8 @@ class DashboardWindow(QWidget):
         self.health_icon = QToolButton()
         self.health_icon.setIconSize(QSize(44, 44))
         self.health_icon.clicked.connect(self.alarms_requested)
+        self.health_icon.setToolTip(strings.TIP_ALARMS)
+        self.health_icon.setCursor(Qt.PointingHandCursor)
         head.addWidget(self.health_icon)
         hcol = QVBoxLayout()
         hcol.setSpacing(2)
@@ -226,17 +238,13 @@ class DashboardWindow(QWidget):
             val.setStyleSheet("font-size: 11pt;")
             grid.addWidget(val, r, 1)
             self.rows[key] = val
+        # No separate "Alarms" row: the health header above already says it and
+        # its icon opens the alarm list (owner: the row was a duplicate).
         r = len(self.rows)
-        grid.addWidget(muted(strings.ROW_ALARMS), r, 0)
-        self.alarm_btn = QToolButton()
-        self.alarm_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.alarm_btn.setToolTip(strings.TIP_ALARMS)
-        self.alarm_btn.clicked.connect(self.alarms_requested)
-        grid.addWidget(self.alarm_btn, r, 1, Qt.AlignRight)
         # Energy comes from the history (not from live data): separate rows,
         # refreshed together with the chart.
         self.energy_rows: dict[str, QLabel] = {}
-        for k, key in enumerate((strings.ROW_ENERGY_TODAY, strings.ROW_ENERGY_WEEK), r + 1):
+        for k, key in enumerate((strings.ROW_ENERGY_TODAY, strings.ROW_ENERGY_WEEK), r):
             name = muted(key)
             name.setToolTip(strings.ENERGY_TIP)
             grid.addWidget(name, k, 0)
@@ -309,6 +317,15 @@ class DashboardWindow(QWidget):
         self.chart_controls.setVisible(index == 0)
         self.cells.update()
 
+    def set_monitors(self, names: list[str], active: int, visible: list[bool] | None = None) -> None:
+        self.selector.set_items(names, visible or [True] * len(names), active)
+        self.selector.setVisible(len(names) > 1)
+
+    def set_history(self, history: History) -> None:
+        """Another BMS is shown: chart and energy come from its history."""
+        self.history = history
+        self.refresh_chart(force=True)
+
     def _set_span(self, span_s: float) -> None:
         self.span_s = span_s
         self.refresh_chart(force=True)
@@ -349,9 +366,11 @@ class DashboardWindow(QWidget):
         upd("connect", strings.MENU_DISCONNECT if connected else strings.MENU_CONNECT,
             self.connect_btn.setText)
 
+        if self.ring.low != snap.low_soc:  # threshold changed in the settings
+            self.ring.low = snap.low_soc
+            self.ring.update()
         self.ring.set_value(None if cell is None else cell.soc, stale)
         self.cells.set_cell(cell, stale)
-        alarm_button_style(self.alarm_btn, snap, 18, upd, none_text=strings.ALARMS_NONE)
 
         if cell is None:
             for t, unit in ((self.tile_current, "A"), (self.tile_power, "W"),
@@ -396,7 +415,8 @@ class DashboardWindow(QWidget):
         def flag(value: bool | None, yes: str, no: str) -> str:
             return strings.NO_VALUE if value is None else (yes if value else no)
 
-        upd(f"row{strings.ROW_BALANCING}", flag(cell.balancing, strings.YES, strings.NO),
+        # Owner: "Active" while balancing, a dash otherwise (also when unknown).
+        upd(f"row{strings.ROW_BALANCING}", strings.BALANCING_ACTIVE if cell.balancing else strings.NO_VALUE,
             self.rows[strings.ROW_BALANCING].setText)
         upd(f"row{strings.ROW_MOSFETS}",
             f"{flag(cell.charging_enabled, strings.ON, strings.OFF)} / "

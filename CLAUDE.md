@@ -142,6 +142,28 @@ History for the chart is in memory only (lost on restart), 10 s buckets.
     with the chart); `ui/cells.py` (cells **tab** next to the chart in the
     dashboard); `state.history_csv` + menu "Export history (CSV)…"
     (comma, dot decimals, local ISO time).
+  - Step D1, several BMS at once (owner 2026-11-15; D2 = parallel banks,
+    not done yet): `app.Monitor` = one BMS (source, tracker, notifier,
+    history, its own `CompactWindow` + `TaskbarStrip`); `Controller.monitors`
+    list, `active` = the one the dashboard shows (title-bar selector,
+    clicking a strip/widget selects it). Shortcuts `ctl.source/history/
+    compact/strip/...` point at the active monitor (single-BMS paths +
+    tests). Settings: the main BMS stays in the old top-level fields
+    (old files load unchanged), more BMS in `extra_devices` (`Device`
+    dicts); `Settings.devices()/set_devices()`. Strips: `slot` i sits
+    i × (width + 6 px) left of the main one, dragging moves the group
+    (`taskbar_offset` is the group offset); in the full-screen corner they
+    stack upwards. Tray icon = main BMS, red badge if any BMS has a fault.
+    Per-BMS `visible` (eye in the settings list, `bms_visible` for the main
+    one): hidden BMS stay connected and keep recording history, they just
+    get no strip/widget and no slot. With several BMS, strips and widgets
+    show the list number. Right-click on a strip/widget: that BMS's items
+    first (hide, remove), then the shared menu ("Show on the taskbar"
+    submenu brings hidden ones back). Python `write_text` on Windows writes
+    CRLF; keep sources LF (git has `text=auto`) or exact-text edits fail.
+    Settings dialog is tabbed (BMS list with add/change/remove, display,
+    state & alerts, system). Never show a modal box from code that tests
+    reach without a tray (offscreen): `_notify` falls back to QMessageBox.
   - `capture.py` (log format; `# driver <id>` header), `replay.py` (plays a
     capture back with original timing).
   - `ble.py`: bleak only (scan with driver detection, characteristic

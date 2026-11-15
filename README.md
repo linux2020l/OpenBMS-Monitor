@@ -31,6 +31,8 @@ settings).*
   full/empty, placed next to the system tray. Drag it along the taskbar.
   During full-screen apps it hides or moves to the screen corner.
 - **Floating widget**: small always-on-top frameless window, drag anywhere.
+- **Several BMS at once**: add more BMS in *Settings → BMS*; each gets its
+  own taskbar strip (side by side) or widget, the dashboard has a selector.
 - **Dashboard**: SOC ring, current, power, voltage, temperature, cell
   voltage range, balancing, MOSFET state, health summary.
 - **History chart**: SOC and current for 1 h / 6 h / 24 h / 7 days, stored
@@ -220,7 +222,8 @@ as the length-prefix byte on Windows notifications) are documented in
 - The taskbar strip is a topmost window placed over the taskbar (Windows 11
   has no API for taskbar widgets); vertical or auto-hiding taskbars are not
   supported.
-- One BMS at a time.
+- Parallel banks (one combined SOC / current for several BMS) are not
+  supported yet; several BMS are shown side by side.
 
 ## Credits
 

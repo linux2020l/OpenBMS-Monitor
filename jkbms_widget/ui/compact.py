@@ -86,6 +86,12 @@ class CompactWindow(QWidget):
         top.setSpacing(6)
         self.dot = StatusDot(10)
         self.soc = QLabel()
+        # BMS number when several are shown (same as in the settings list).
+        self.number = QLabel()
+        self.number.setProperty("muted", True)
+        self.number.setStyleSheet("font-size: 9pt; font-weight: 600;")
+        self.number.hide()
+        top.addWidget(self.number, 0, Qt.AlignVCenter)
         top.addWidget(self.dot, 0, Qt.AlignVCenter)
         top.addWidget(self.soc)
         left.addLayout(top)
@@ -134,6 +140,10 @@ class CompactWindow(QWidget):
         self.setMinimumWidth(380)
         self.update_view(Snapshot(cell=None))
 
+    def set_number(self, number: int | None) -> None:
+        self.number.setText("" if number is None else str(number))
+        self.number.setVisible(number is not None)
+
     def update_view(self, snap: Snapshot) -> None:
         upd = self.upd
         cell = snap.cell
@@ -148,7 +158,7 @@ class CompactWindow(QWidget):
             upd("w", value_html(strings.NO_VALUE, "W", 12, main), self.power.setText)
             upd("state", "", self.state.setText)
         else:
-            soc_color = theme.MUTED if snap.stale else theme.soc_color(cell.soc)
+            soc_color = theme.MUTED if snap.stale else theme.soc_color(cell.soc, snap.low_soc)
             upd("soc", value_html(f"{cell.soc}", "%", 20, soc_color), self.soc.setText)
             upd("v", value_html(strings.fmt_voltage(cell.pack_voltage), "V", 12, main),
                 self.voltage.setText)

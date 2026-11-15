@@ -30,6 +30,8 @@ STRIP_WIDTH = 236  # logical px
 DRAG_THRESHOLD = 4  # px of movement before a press becomes a drag
 CORNER_MARGIN = 12  # logical px from the screen edges in "corner" mode
 CORNER_HEIGHT = 42
+SLOT_GAP = 6  # px between strips when several BMS are shown
+NUMBER_WIDTH = 10  # px left of the battery icon for the BMS number
 ICON_RECT = QRectF(8, 0, 30, 16)  # battery icon; y is centred at paint time
 
 
@@ -51,7 +53,9 @@ class TaskbarStrip(QWidget):
         self.setMouseTracking(True)
         self.setWindowTitle(strings.APP_TITLE)
         self.snap = Snapshot(cell=None)
-        self.offset: int | None = None  # None = right next to the tray
+        self.offset: int | None = None  # group offset; None = right next to the tray
+        self.slot = 0  # position in the group (several BMS: one strip each, right to left)
+        self.number: int | None = None  # BMS number shown left of the icon (several BMS)
         self.wanted = False  # taskbar mode is on
         self.fullscreen_behavior = "hide"  # or "corner"
         self.light = False
@@ -89,8 +93,18 @@ class TaskbarStrip(QWidget):
     def _corner_geometry(self) -> tuple[int, int, int, int]:
         screen = QGuiApplication.primaryScreen().geometry()  # full screen, not work area
         return (screen.right() - STRIP_WIDTH - CORNER_MARGIN + 1,
-                screen.bottom() - CORNER_HEIGHT - CORNER_MARGIN + 1,
+                screen.bottom() - CORNER_HEIGHT - CORNER_MARGIN + 1
+                - self.slot * (CORNER_HEIGHT + SLOT_GAP),  # several BMS: stacked upwards
                 STRIP_WIDTH, CORNER_HEIGHT)
+
+    def _effective_offset(self, info: wt.TaskbarInfo | None) -> int | None:
+        """This strip's offset from the taskbar edge: group offset + its slot."""
+        base = self.offset
+        if base is None:
+            if not self.slot:
+                return None  # first strip, default place: strip_geometry decides
+            base = wt.default_offset(info, self._dpr()) if info else wt.FALLBACK_OFFSET
+        return base + self.slot * (STRIP_WIDTH + SLOT_GAP)
 
     def reposition(self) -> None:
         if not self.wanted:
@@ -110,7 +124,8 @@ class TaskbarStrip(QWidget):
         else:
             info = wt.taskbar_info()
             self._info = info
-            geo = None if info is None else wt.strip_geometry(info, self._dpr(), STRIP_WIDTH, self.offset)
+            geo = None if info is None else wt.strip_geometry(info, self._dpr(), STRIP_WIDTH,
+                                                       self._effective_offset(info))
             corner = False
             if geo is None:
                 self.hide()  # vertical / auto-hide taskbar: not supported
@@ -123,12 +138,23 @@ class TaskbarStrip(QWidget):
             self.setGeometry(*geo)
         if not self.isVisible():
             self.show()
+            # Windows may place a new tool window on its first show; put it
+            # where it belongs right away (owner saw new strips overlap).
+            if tuple(self.geometry().getRect()) != geo:
+                self.setGeometry(*geo)
         wt.keep_on_top(native_hwnd(self))
 
     # ----- painting ---------------------------------------------------------
+    def set_number(self, number: int | None) -> None:
+        if number != self.number:
+            self.number = number
+            self.update()
+
     def _icon_rect(self) -> QRectF:
         r = QRectF(ICON_RECT)
         r.moveTop(self.height() / 2 - r.height() / 2)
+        if self.number is not None:
+            r.translate(NUMBER_WIDTH, 0)  # room for the BMS number
         return r
 
     def paintEvent(self, _event) -> None:
@@ -154,10 +180,16 @@ class TaskbarStrip(QWidget):
             text = muted
         h = r.height()
 
+        # BMS number when several are shown (same as in the settings list).
+        if self.number is not None:
+            p.setFont(QFont(theme.FONT_FAMILY, 8, QFont.Bold))
+            p.setPen(muted)
+            p.drawText(QRectF(2, 0, NUMBER_WIDTH, h), Qt.AlignCenter, str(self.number))
+
         # Battery icon (replaces the old status dot and the right-hand check).
         icon_rect = self._icon_rect()
         outline = muted.name() if (snap.stale or cell is None) else text.name()
-        fill = theme.GREY if snap.stale else (theme.soc_color(cell.soc) if cell else theme.GREY)
+        fill = theme.GREY if snap.stale else (theme.soc_color(cell.soc, snap.low_soc) if cell else theme.GREY)
         icons.paint_battery(
             p, icon_rect,
             soc=None if cell is None else cell.soc,
@@ -170,7 +202,7 @@ class TaskbarStrip(QWidget):
         big = QFont(theme.FONT_FAMILY, 13, QFont.Bold)
         p.setFont(big)
         soc_text = f"{cell.soc}%" if cell else f"{strings.NO_VALUE}%"
-        soc_color = QColor(theme.soc_color(cell.soc)) if cell and not snap.stale else text
+        soc_color = QColor(theme.soc_color(cell.soc, snap.low_soc)) if cell and not snap.stale else text
         p.setPen(soc_color)
         fm = QFontMetricsF(big)
         p.drawText(QPointF(x, h / 2 + fm.capHeight() / 2), soc_text)
@@ -199,10 +231,15 @@ class TaskbarStrip(QWidget):
     def icon_tooltip(self) -> str:
         snap = self.snap
         if snap.fault_alarms:
-            return "\n".join(strings.alarm_text(b) for b in snap.fault_alarms)
-        if snap.cell is None or snap.status not in ("connected", "replay"):
-            return strings.STATUS_TEXT.get(snap.status, snap.status)
-        return strings.NO_ALARMS
+            text = "\n".join(strings.alarm_text(b) for b in snap.fault_alarms)
+        elif snap.cell is None or snap.status not in ("connected", "replay"):
+            text = strings.STATUS_TEXT.get(snap.status, snap.status)
+        else:
+            text = strings.NO_ALARMS
+        if snap.is_low:
+            text = strings.LOW_SOC_STATE.format(t=snap.low_soc) + "\n" + text
+        # Several strips side by side: say which BMS this one is.
+        return f"{snap.device_name}\n{text}" if snap.device_name else text
 
     # ----- mouse ------------------------------------------------------------
     def enterEvent(self, _e) -> None:
@@ -218,8 +255,9 @@ class TaskbarStrip(QWidget):
             self._press = e.globalPosition().toPoint()
             self._press_local = e.position()
             info = self._info
+            eff = self._effective_offset(info)
             self._press_offset = (
-                self.offset if self.offset is not None
+                eff if eff is not None
                 else (wt.default_offset(info, self._dpr()) if info else wt.FALLBACK_OFFSET)
             )
             self._dragging = False
@@ -240,7 +278,8 @@ class TaskbarStrip(QWidget):
         geo = wt.strip_geometry(self._info, self._dpr(), STRIP_WIDTH, new_offset)
         if geo:
             self.setGeometry(*geo)
-            self.offset = int(self._info.right / self._dpr()) - (geo[0] + geo[2])
+            eff = int(self._info.right / self._dpr()) - (geo[0] + geo[2])
+            self.offset = eff - self.slot * (STRIP_WIDTH + SLOT_GAP)  # group offset
 
     def mouseReleaseEvent(self, e) -> None:
         if e.button() != Qt.LeftButton or self._press is None:

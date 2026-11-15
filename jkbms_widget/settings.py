@@ -25,7 +25,25 @@ def app_dir() -> Path:
 
 
 @dataclass
+class Device:
+    """One monitored BMS."""
+
+    address: str
+    name: str = ""
+    driver: str = "jk"
+    variant: str | None = None  # JK only
+    compact_pos: list[int] | None = None  # its floating widget, [x, y]
+    visible: bool = True  # own strip / widget shown (data is recorded either way)
+
+
+_DEVICE_KEYS = {f.name for f in fields(Device)}
+
+
+@dataclass
 class Settings:
+    # The first (main) BMS keeps its original top-level fields, so settings
+    # files from before multi-BMS support load unchanged; further BMS are
+    # in `extra_devices` (owner's request 2026-11-15: several BMS at once).
     address: str | None = None  # BMS MAC address
     bms_name: str = ""  # last known BLE name, for display
     driver: str = "jk"  # BMS family (drivers.DRIVERS ids); old files = JK
@@ -43,7 +61,31 @@ class Settings:
     language: str = "auto"  # "auto" (Windows display language), "uk" or "en"
     notify_enabled: bool = True  # Windows notifications (low SOC, alarms, lost, full)
     low_soc_threshold: int = 20  # %, "low battery" notification
+    bms_visible: bool = True  # main BMS: strip / widget shown
+    extra_devices: list[dict] = field(default_factory=list)  # Device dicts, 2nd BMS on
     extra: dict = field(default_factory=dict)  # forward compatibility
+
+    # ----- devices --------------------------------------------------------------
+    def devices(self) -> list[Device]:
+        """All monitored BMS, the main one first (empty before the first pick)."""
+        out = []
+        if self.address:
+            out.append(Device(self.address, self.bms_name, self.driver, self.variant,
+                              self.compact_pos, self.bms_visible))
+        for d in self.extra_devices:
+            out.append(Device(**{k: v for k, v in d.items() if k in _DEVICE_KEYS}))
+        return out
+
+    def set_devices(self, devices: list[Device]) -> None:
+        """Store the list back (the first one becomes the main BMS)."""
+        if devices:
+            main = devices[0]
+            self.address, self.bms_name, self.driver = main.address, main.name, main.driver
+            self.variant, self.compact_pos = main.variant, main.compact_pos
+            self.bms_visible = main.visible
+        else:
+            self.address, self.bms_name = None, ""
+        self.extra_devices = [asdict(d) for d in devices[1:]]
 
     @classmethod
     def load(cls, path: Path) -> "Settings":
@@ -92,6 +134,26 @@ class Settings:
             self.compact_pos = None
         if not (isinstance(self.dashboard_geometry, list) and len(self.dashboard_geometry) == 4):
             self.dashboard_geometry = None
+        # Extra BMS: keep only well-formed entries, no duplicates of the main one.
+        known_drivers = {d.id for d in drivers.DRIVERS}
+        seen = {(self.address or "").upper()}
+        clean = []
+        for d in self.extra_devices if isinstance(self.extra_devices, list) else []:
+            if not (isinstance(d, dict) and isinstance(d.get("address"), str)):
+                continue
+            entry = {k: v for k, v in d.items() if k in _DEVICE_KEYS}
+            entry["address"] = entry["address"].upper()
+            if entry["address"] in seen:
+                continue
+            seen.add(entry["address"])
+            if entry.get("driver") not in known_drivers:
+                entry["driver"] = drivers.DEFAULT_DRIVER.id
+            pos = entry.get("compact_pos")
+            if not (isinstance(pos, list) and len(pos) == 2):
+                entry["compact_pos"] = None
+            entry["visible"] = bool(entry.get("visible", True))
+            clean.append(entry)
+        self.extra_devices = clean
 
     def save(self, path: Path) -> None:
         # Write to a temp file first so a crash never leaves a half-written file.
