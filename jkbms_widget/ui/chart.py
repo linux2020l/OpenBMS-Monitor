@@ -4,7 +4,10 @@ Two panels sharing one time axis, each on its own darker rounded
 background so they read as separate charts:
 * top: SOC 0-100 %, grid every 25 %, line in PASTEL green while charging,
   pastel amber while discharging, light grey at ~0 A (owner's request:
-  lighter than the current colours);
+  lighter than the current colours); the area under it is filled with a
+  vertical gradient in the same direction colour (owner's choice
+  2026-11-15); the fill colour follows the current averaged over ~12 px,
+  so standby noise around the idle threshold doesn't paint stripes;
 * bottom: |current| 0..N A in 10 A steps, coloured by direction
   (green = charging, amber = discharging, grey = ~0).
 Time ticks fall on round clock times (every 5/10 min ... 1 day).
@@ -24,7 +27,8 @@ import time
 from datetime import datetime
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen
+from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QLinearGradient, QPainter,
+                           QPainterPath, QPen)
 from PySide6.QtWidgets import QWidget
 
 from .. import strings
@@ -44,6 +48,9 @@ PANEL_PAD = 6.0  # px the panel background extends around the plot area
 # tiny fixed value coloured idle banks as charging / discharging (owner's report).
 ZERO_CURRENT = 0.05
 
+SOC_FILL_ALPHA = (85, 5)  # gradient alpha at 100 % and at 0 % of the SOC panel
+FILL_SMOOTH_PX = 12.0  # fill colour: current averaged over this many px
+FILL_MIN_PX = 3.0  # fill colour runs narrower than this join the previous run
 SELECT_COLOR = theme.BLUE
 DRAG_MIN_PX = 4  # shorter drags count as a click (clears the selection)
 
@@ -121,6 +128,49 @@ def _soc_color(current: float, idle: float = ZERO_CURRENT) -> str:
     if current <= -idle:
         return SOC_DISCHARGE_COLOR
     return SOC_IDLE_COLOR
+
+
+def smooth(xs: list[float], values: list[float], window_px: float) -> list[float]:
+    """Centred moving average of `values` over points within window_px / 2 in x."""
+    prefix = [0.0]
+    for v in values:
+        prefix.append(prefix[-1] + v)
+    out, lo, hi, half = [], 0, 0, window_px / 2
+    for x in xs:
+        while xs[lo] < x - half:
+            lo += 1
+        while hi < len(xs) and xs[hi] <= x + half:
+            hi += 1
+        out.append((prefix[hi] - prefix[lo]) / (hi - lo))
+    return out
+
+
+def fill_runs(seg_colors: list[str | None], xs: list[float],
+              min_px: float = FILL_MIN_PX) -> list[tuple[str, int, int]]:
+    """Colour runs for the SOC fill: (colour, first point, last point).
+
+    seg_colors[k] is the colour of the segment from point k to k + 1 (None
+    = gap, never filled across). Runs narrower than `min_px` take the
+    colour of the run before them: current hovering around the idle
+    threshold would otherwise paint thin vertical stripes.
+    """
+    runs: list[list | None] = []
+    for k, col in enumerate(seg_colors):
+        if col is None:
+            runs.append(None)
+        elif runs and runs[-1] is not None and runs[-1][0] == col:
+            runs[-1][2] = k + 1
+        else:
+            runs.append([col, k, k + 1])
+    out: list[list | None] = []
+    for r in runs:
+        prev = out[-1] if out else None
+        if r is not None and prev is not None and (
+                prev[0] == r[0] or xs[r[2]] - xs[r[1]] < min_px):
+            prev[2] = r[2]
+        else:
+            out.append(r)
+    return [tuple(r) for r in out if r is not None]
 
 
 def range_summary(points: list[HistoryPoint], t0: float, t1: float,
@@ -295,6 +345,7 @@ class HistoryChart(QWidget):
         # Both lines: one path per colour, each segment coloured by the
         # direction of the current at its end; no segment across a gap.
         idle = self.idle_threshold
+        self._fill_soc(p, pts, max_gap, soc_rect, soc_y, lambda i: _soc_color(i, idle))
         self._draw_segments(p, pts, max_gap, soc_rect, soc_y, lambda i: _soc_color(i, idle), 1.8)
         self._draw_segments(p, pts, max_gap, cur_rect, cur_y,
                             lambda i: _direction_color(i, idle), 2.0)
@@ -360,6 +411,31 @@ class HistoryChart(QWidget):
         for n, (text, c) in enumerate(rows):
             p.setPen(QColor(c))
             p.drawText(QPointF(bx + pad, by + pad + fm.ascent() + n * line_h), text)
+
+    def _fill_soc(self, p, pts, max_gap, rect, y_of, color_of) -> None:
+        """Area under the SOC line: direction colour, fading towards 0 %."""
+        xs = [self._x_of(pt.time, rect) for pt in pts]
+        currents = smooth(xs, [pt.current for pt in pts], FILL_SMOOTH_PX)
+        seg_colors = [None if pts[k + 1].time - pts[k].time > max_gap else color_of(currents[k + 1])
+                      for k in range(len(pts) - 1)]
+        bottom = rect.bottom()
+        p.setPen(Qt.NoPen)
+        for color, i0, i1 in fill_runs(seg_colors, xs):
+            path = QPainterPath()
+            path.moveTo(QPointF(xs[i0], bottom))
+            for i in range(i0, i1 + 1):
+                path.lineTo(QPointF(xs[i], y_of(pts[i])))
+            path.lineTo(QPointF(xs[i1], bottom))
+            path.closeSubpath()
+            top_c, bottom_c = QColor(color), QColor(color)
+            top_c.setAlpha(SOC_FILL_ALPHA[0])
+            bottom_c.setAlpha(SOC_FILL_ALPHA[1])
+            grad = QLinearGradient(0, rect.top(), 0, bottom)
+            grad.setColorAt(0, top_c)
+            grad.setColorAt(1, bottom_c)
+            p.setBrush(grad)
+            p.drawPath(path)
+        p.setBrush(Qt.NoBrush)
 
     def _draw_segments(self, p, pts, max_gap, rect, y_of, color_of, width) -> None:
         paths: dict[str, QPainterPath] = {}

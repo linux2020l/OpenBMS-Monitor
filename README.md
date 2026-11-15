@@ -64,7 +64,8 @@ settings).*
 - **History chart**: SOC and current for 1 h / 6 h / 24 h / 7 days, stored
   per BMS and per bank in SQLite, survives restarts. Hover to see time, SOC,
   current, voltage and power. Colours show charge (green), discharge (amber)
-  and idle (grey, below the idle threshold from the settings).
+  and idle (grey, below the idle threshold from the settings); the SOC area
+  is filled with a soft gradient in the same colours.
   Drag across the chart to see the energy that went into and out of the
   battery in that range (plus net and SOC change); click to clear.
 - **Cells tab**: every cell voltage as a bar (lowest blue, highest amber),

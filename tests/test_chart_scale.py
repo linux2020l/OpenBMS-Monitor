@@ -72,3 +72,22 @@ def test_range_summary_gives_energy_net_and_soc_change():
     assert info["soc0"] == 50 and info["soc1"] == pytest.approx(50 + 1790 / 360)
     assert chart.range_summary(pts, 5000, 6000) is None
     assert chart.range_summary([], 0, 10) is None
+
+
+def test_fill_runs_merge_flicker_and_stop_at_gaps():
+    G, A, I = "green", "amber", "grey"
+    xs = [float(10 * k) for k in range(8)]  # 10 px apart
+    # Long runs stay separate; a gap (None) is never filled across.
+    assert chart.fill_runs([G, G, A, A, None, I, I], xs) == [(G, 0, 2), (A, 2, 4), (I, 5, 7)]
+    # Runs narrower than min_px take the previous colour, then merge.
+    xs = [float(k) for k in range(8)]  # 1 px apart
+    assert chart.fill_runs([G, G, G, A, G, G, G], xs, min_px=3) == [(G, 0, 7)]
+    assert chart.fill_runs([G, G, G, A, A, A, A], xs, min_px=3) == [(G, 0, 3), (A, 3, 7)]
+    assert chart.fill_runs([], []) == []
+
+
+def test_smooth_averages_neighbours_within_the_window():
+    xs = [0.0, 1.0, 2.0, 3.0, 10.0]
+    assert chart.smooth(xs, [1, -1, 1, -1, 5], 2.0) == [0.0, 1 / 3, -1 / 3, 0.0, 5.0]
+    assert chart.smooth([], [], 12) == []
+

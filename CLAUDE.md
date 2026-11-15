@@ -146,6 +146,10 @@ History for the chart is in memory only (lost on restart), 10 s buckets.
     shades a range and shows energy in / out, net and SOC change
     (`state.energy_between`, partial buckets by overlap;
     `chart.range_summary`); a click clears it, switching BMS clears it.
+    SOC area fill (owner, v0.9.1): vertical gradient in the direction
+    colour; colour from current smoothed over 12 px (`chart.smooth`,
+    `fill_runs`) so standby noise doesn't stripe. Versions: small → patch,
+    big feature → minor (owner).
   - Step D1, several BMS at once (owner 2026-11-15; D2 = parallel banks
     below): `app.Monitor` = one BMS (source, tracker, notifier,
     history, its own `CompactWindow` + `TaskbarStrip`); `Controller.monitors`
