@@ -67,6 +67,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\dist\OpenBmsMonitor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
+; Files of the previous version: [Files] only overwrites, so a DLL that a
+; newer build no longer ships would stay behind forever. The folder holds
+; nothing but the program (settings and history live in %APPDATA%).
+Type: filesandordirs; Name: "{app}\_internal"
 ; Leftovers of the version before the rename (program folder, shortcuts).
 Type: filesandordirs; Name: "{autopf}\JkBmsWidget"
 Type: files; Name: "{autoprograms}\{#OldName}.lnk"
