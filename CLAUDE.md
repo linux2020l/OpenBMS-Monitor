@@ -64,7 +64,10 @@ Hardware (from the official JK app "About" screen, app V6.4.05):
 
 The owner's original mockup image stays local only (not published, it is
 an example of another app). Current look: [docs/screenshots/](docs/screenshots/)
-(rendered from demo data, offscreen; README uses the English UI).
+(rendered offscreen, README uses the English UI; `dashboard.png` and
+`chart-selection.png` come from the owner's real history — owner's request
+2026-11-15 — via a read-only copy of `history.sqlite`, the live tiles from
+the last history point; the other shots use demo data).
 UI text: **Ukrainian (original) + English** (owner's request 2026-11-15).
 Every visible string lives in `strings.py` (uk) and `strings_en.py` (en),
 same UPPER_CASE names; `tests/test_strings.py` enforces matching names,
@@ -297,6 +300,16 @@ HWND_TOPMOST`, no activation), hidden during full-screen apps
 taskbars. Win32 rects are physical px; divide by the primary screen's
 devicePixelRatio for Qt. Owner's PC: taskbar 2560×48 at bottom, tray from x=2340.
   - `tools/make_fixture.py`: raw dump → sanitized fixture in `tests/fixtures/`.
+
+## ESP32 gateway (planned, design only)
+
+Optional always-on module that reads the BMS, stores history on microSD and
+serves it to the PC app over the LAN. Architecture, record format, API and
+milestones G0-G6: [docs/esp32-gateway.md](docs/esp32-gateway.md). Owner's
+decisions 2026-11-15: ESP-IDF (C), Wi-Fi only (no Ethernet for now),
+ESP32-S3 DevKitC + modules, power from B+ with low-voltage shutdown, firmware in
+`firmware/` of this repo, BLE first (RS485 later). Same read-only rules as
+the app. Keep the doc updated when decisions change.
 
 ## Commands
 

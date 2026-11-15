@@ -12,7 +12,12 @@ Built for a home backup battery (4S LiFePO4), where the PC itself runs from
 the battery and you want to see what it is doing at a glance. Formerly
 *JK BMS Monitor*.
 
-![Dashboard](docs/screenshots/dashboard.png)
+![Dashboard: one day of a real 4S LiFePO4 backup battery](docs/screenshots/dashboard.png)
+
+Drag across the chart to measure a range: here a full discharge of the
+second 4 kWh pack, 4.07 kWh out in under three hours.
+
+![Chart with a selected range: energy in / out, net, SOC change](docs/screenshots/chart-selection.png)
 
 | Taskbar strip | Floating widget |
 |---|---|
@@ -30,9 +35,10 @@ the battery and you want to see what it is doing at a glance. Formerly
 
 </details>
 
-*Screenshots use demo data. The interface is available in **English** and
-**Ukrainian** (follows the Windows display language, can be changed in
-settings).*
+*The dashboard and chart screenshots show real data from the author's two
+batteries; the others use demo data. The interface is available in
+**English** and **Ukrainian** (follows the Windows display language, can be
+changed in settings).*
 
 ## Features
 
@@ -61,11 +67,12 @@ settings).*
   - Low charge / full notifications come from the bank, alarms from each BMS.
 - **Dashboard**: SOC ring, current, power, voltage, temperature, cell
   voltage range, balancing, MOSFET state, health summary.
-- **History chart**: SOC and current for 1 h / 6 h / 24 h / 7 days, stored
-  per BMS and per bank in SQLite, survives restarts. Hover to see time, SOC,
-  current, voltage and power. Colours show charge (green), discharge (amber)
-  and idle (grey, below the idle threshold from the settings); the SOC area
-  is filled with a soft gradient in the same colours.
+- **History chart**: current on top, SOC below, for 1 h / 6 h / 24 h /
+  7 days, stored per BMS and per bank in SQLite, survives restarts. Hover to
+  see time, SOC, current, voltage and power. Colours show charge (green),
+  discharge (amber) and idle (grey, below the idle threshold from the
+  settings); the SOC area is filled with a soft gradient in the same
+  colours. Gaps show when the app was not running.
   Drag across the chart to see the energy that went into and out of the
   battery in that range (plus net and SOC change); click to clear.
 - **Cells tab**: every cell voltage as a bar (lowest blue, highest amber),
@@ -134,8 +141,9 @@ that is all a new decoder needs. Step-by-step guide:
    it. No administrator rights are needed; the app is installed for the
    current user (`%LOCALAPPDATA%\Programs\OpenBmsMonitor`) and can be removed in
    *Settings → Apps*. Your settings and history are kept on uninstall.
-   Updating from *JK BMS Monitor* (before v0.8.0) replaces the old app and
-   keeps settings, history and "start with Windows".
+   A new version installs over the old one and removes its program files;
+   settings and history stay. Updating from *JK BMS Monitor* (before
+   v0.8.0) replaces the old app the same way and keeps "start with Windows".
 2. The installer is not code-signed, so Windows SmartScreen may show
    "Windows protected your PC": click *More info → Run anyway*.
 3. Close the BMS phone app (or disconnect it). A BMS accepts only one
@@ -227,8 +235,8 @@ release, set the new version in `jkbms_widget/__init__.py`, commit, then
 push a matching tag:
 
 ```powershell
-git tag v0.9.0
-git push origin v0.9.0
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 [.github/workflows/release.yml](.github/workflows/release.yml) then runs
@@ -273,6 +281,7 @@ jkbms_widget/
 tests/               pytest; fixtures/ holds sanitized real captures
 tools/               make_fixture.py (sanitize dumps), make_icon.py
 installer/           Inno Setup script for the Windows installer
+docs/                screenshots, capture guide, ESP32 gateway design
 build.ps1            test + build the app + build the installer
 .github/workflows/   tests on every push, release on a version tag
 CLAUDE.md            design notes, protocol notes and conventions
@@ -283,6 +292,16 @@ without BLE or UI imports, so it can be ported (e.g. to Android) together
 with its test vectors. Protocol details, verified offsets and quirks (such
 as the length-prefix byte on Windows notifications) are documented in
 [CLAUDE.md](CLAUDE.md#jk-ble-protocol-notes).
+
+## Roadmap
+
+- **Decoders for JBD, Daly / 100Balance and ANT** from community captures
+  (see [Help add your BMS](#help-add-your-bms)).
+- **ESP32 gateway** (planned, design only): an optional small module next
+  to the batteries that reads the BMS around the clock, keeps the history on
+  a microSD card and serves it to the PC app over Wi-Fi, so the PC does not
+  have to stay on. Same read-only rules. Architecture, parts list and
+  milestones: [docs/esp32-gateway.md](docs/esp32-gateway.md).
 
 ## Limitations
 
