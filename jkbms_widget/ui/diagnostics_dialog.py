@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from .. import diagnostics, drivers, strings, win_taskbar
 from ..ble import ScanResult
+from ..settings import DOCUMENTS_DIR_NAME
 from .picker import _Scanner
 from .widgets import native_hwnd
 
@@ -37,7 +38,7 @@ DIAG_SECONDS = 60
 
 def captures_folder() -> Path:
     docs = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation) or str(Path.home())
-    return Path(docs) / "JK BMS Monitor"
+    return Path(docs) / DOCUMENTS_DIR_NAME
 
 
 class _Recorder(QObject):

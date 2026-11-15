@@ -68,6 +68,8 @@ class SettingsDialog(QDialog):
     bank_remove_requested = Signal(int)
     bank_visibility_changed = Signal(int, bool)
     desktop_changed = Signal(bool)  # floating widgets pinned to the desktop
+    updates_changed = Signal(bool)  # daily update check on / off
+    update_check_requested = Signal()
     mode_changed = Signal(str)  # "widget" / "taskbar"
     scale_changed = Signal(float)
     language_changed = Signal(str)  # "auto" / "uk" / "en"
@@ -290,6 +292,18 @@ class SettingsDialog(QDialog):
         tools.addWidget(diag)
         tools.addStretch(1)
         p.addLayout(tools)
+        p.addWidget(QFrame(objectName="line"))
+        p.addWidget(_section(strings.SECTION_UPDATES))
+        self.updates = QCheckBox(strings.UPDATE_CHECK_LABEL)
+        self.updates.setChecked(settings.check_updates)
+        self.updates.toggled.connect(self.updates_changed)
+        p.addWidget(self.updates)
+        check_now = QPushButton(strings.UPDATE_CHECK_NOW)
+        check_now.setProperty("secondary", True)
+        check_now.setEnabled(not replay)
+        check_now.clicked.connect(self.update_check_requested)
+        p.addWidget(check_now, 0, Qt.AlignLeft)
+        p.addWidget(_note(strings.UPDATE_CHECK_NOTE))
         p.addStretch(1)
         self.tabs.addTab(page, strings.SETTINGS_TAB_SYSTEM)
 

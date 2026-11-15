@@ -89,3 +89,21 @@ def test_devices_main_plus_extras_round_trip(tmp_path):
     assert s.address is None and s.devices() == []
     s.set_devices([Device("AA:01", "A"), Device("AA:02", "B")])
     assert [d.name for d in s.devices()] == ["A", "B"]
+
+
+def test_old_data_folder_moves_to_the_new_name_once(tmp_path):
+    from jkbms_widget.settings import migrate_legacy_dir
+
+    old, new = tmp_path / "JkBmsWidget", tmp_path / "OpenBmsMonitor"
+    old.mkdir()
+    (old / "settings.json").write_text('{"address": "AA:01"}', encoding="utf-8")
+    (old / "history.sqlite").write_bytes(b"db")
+    assert migrate_legacy_dir(old, new)
+    assert (new / "settings.json").exists() and (new / "history.sqlite").read_bytes() == b"db"
+    assert not old.exists()
+    # Never overwrites: a second old folder (e.g. an old version run again) is left alone.
+    old.mkdir()
+    (old / "settings.json").write_text("{}", encoding="utf-8")
+    assert not migrate_legacy_dir(old, new)
+    assert "AA:01" in (new / "settings.json").read_text(encoding="utf-8")
+    assert not migrate_legacy_dir(tmp_path / "missing", tmp_path / "other")

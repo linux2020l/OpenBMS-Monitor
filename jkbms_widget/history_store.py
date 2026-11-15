@@ -1,6 +1,6 @@
 """Long-term chart history in SQLite (stdlib sqlite3), one series per BMS.
 
-File: %APPDATA%\\JkBmsWidget\\history.sqlite. Rows are the 10-second
+File: %APPDATA%\\OpenBmsMonitor\\history.sqlite. Rows are the 10-second
 buckets of `state.History`; anything older than RETENTION_S is pruned.
 Pure Python, no Qt. All calls happen on the GUI thread.
 """

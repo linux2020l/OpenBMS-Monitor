@@ -1,14 +1,14 @@
 # Help add your BMS: diagnostic captures
 
-JK BMS Monitor reads JK BMS today. Support for **JBD / Xiaoxiang**,
+OpenBMS Monitor reads JK BMS today. Support for **JBD / Xiaoxiang**,
 **Daly / 100Balance** and **ANT** is being added, and the fastest way to get
 there is a short recording from a real device. You do not need to install
 anything else or know anything about Bluetooth.
 
 ## How to record (about 2 minutes)
 
-1. Install the latest `JkBmsWidget-Setup-x.y.z.exe` from
-   [Releases](https://github.com/linux2020l/JkBMS-PC-Monitor/releases)
+1. Install the latest `OpenBmsMonitor-Setup-x.y.z.exe` from
+   [Releases](https://github.com/linux2020l/OpenBMS-Monitor/releases)
    (Windows 10/11 with Bluetooth).
 2. **Close the BMS app on your phone** (or turn off Bluetooth on the phone).
    A BMS accepts only one Bluetooth connection.
@@ -20,9 +20,9 @@ anything else or know anything about Bluetooth.
 6. Write down what the phone app showed shortly before (SOC, voltage,
    current, a few cell voltages, temperatures). It helps to verify the
    decoding.
-7. After 60 s the file is saved to `Documents\JK BMS Monitor\`
+7. After 60 s the file is saved to `Documents\OpenBMS Monitor\`
    (`bms-capture-<brand>-<date>.txt`). Press **Open folder**.
-8. [Open an issue](https://github.com/linux2020l/JkBMS-PC-Monitor/issues/new?template=bms-capture.yml)
+8. [Open an issue](https://github.com/linux2020l/OpenBMS-Monitor/issues/new?template=bms-capture.yml)
    and attach the file, or send it to the developer.
 
 Even if the BMS sends no data (wrong brand, unknown model), please share

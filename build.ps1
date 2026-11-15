@@ -3,11 +3,12 @@
 #   powershell -ExecutionPolicy Bypass -File build.ps1
 #
 # Output:
-#   dist\JkBmsWidget\JkBmsWidget.exe          the app (one folder, fast start)
-#   dist\JkBmsWidget-Setup-<version>.exe      installer (needs Inno Setup 6:
+#   dist\OpenBmsMonitor\OpenBmsMonitor.exe    the app (one folder, fast start)
+#   dist\OpenBmsMonitor-Setup-<version>.exe   installer (needs Inno Setup 6:
 #                                             winget install JRSoftware.InnoSetup)
 $ErrorActionPreference = "Stop"
-$py = ".\.venv\Scripts\python.exe"
+# Local builds use the project's venv; GitHub Actions sets BUILD_PYTHON=python.
+$py = if ($env:BUILD_PYTHON) { $env:BUILD_PYTHON } else { ".\.venv\Scripts\python.exe" }
 
 # pip writes notices to stderr; don't let PowerShell treat that as an error.
 $ErrorActionPreference = "Continue"
@@ -22,9 +23,8 @@ Write-Host "Version $version"
 # One-folder build: starts faster than --onefile (no unpacking to %TEMP% on
 # every start) and antivirus tools flag it far less often.
 & $py tools\make_icon.py assets\icon.ico
-if (Test-Path dist\JkBmsWidget.exe) { Remove-Item dist\JkBmsWidget.exe }  # old one-file build
 & $py -m PyInstaller --noconfirm --clean --onedir --windowed `
-    --name JkBmsWidget --icon assets\icon.ico `
+    --name OpenBmsMonitor --icon assets\icon.ico `
     jkbms_widget_app.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
@@ -33,12 +33,14 @@ $iscc = @(
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
     "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $iscc) {
+if (-not $iscc -and $env:CI) {
+    throw "Inno Setup 6 not found on the build machine."
+} elseif (-not $iscc) {
     Write-Warning "Inno Setup 6 not found - skipping the installer (winget install JRSoftware.InnoSetup)."
 } else {
-    & $iscc /Q "/DAppVersion=$version" installer\JkBmsWidget.iss
+    & $iscc /Q "/DAppVersion=$version" installer\OpenBmsMonitor.iss
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed." }
 }
 
-Get-ChildItem dist -File -Filter "JkBmsWidget-Setup-*.exe" |
+Get-ChildItem dist -File -Filter "OpenBmsMonitor-Setup-*.exe" |
     Select-Object Name, @{n="MB"; e={[math]::Round($_.Length / 1MB, 1)}}

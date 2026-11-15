@@ -1,6 +1,6 @@
 """Start with Windows via the per-user Run registry key (exe build only).
 
-HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\JkBmsWidget =
+HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\OpenBmsMonitor =
     "<exe path>" --autostart
 Per-user, no admin rights needed, visible and removable in Task Manager >
 Startup apps. `--autostart` tells the app it was started by Windows, so it
@@ -14,7 +14,8 @@ from __future__ import annotations
 import sys
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-VALUE_NAME = "JkBmsWidget"
+VALUE_NAME = "OpenBmsMonitor"
+LEGACY_VALUE_NAME = "JkBmsWidget"  # before the rename (v0.8.0)
 AUTOSTART_FLAG = "--autostart"
 
 
@@ -30,14 +31,14 @@ def command() -> str:
     return f"{_exe()} {AUTOSTART_FLAG}"
 
 
-def _read() -> str | None:
+def _read(name: str = VALUE_NAME) -> str | None:
     if sys.platform != "win32":
         return None
     import winreg
 
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-            return winreg.QueryValueEx(key, VALUE_NAME)[0]
+            return winreg.QueryValueEx(key, name)[0]
     except OSError:
         return None
 
@@ -63,6 +64,19 @@ def set_enabled(enabled: bool) -> None:
 
 
 def upgrade_entry() -> None:
-    """Older builds registered the exe without --autostart: fix it in place."""
-    if available() and is_enabled() and _read() != command():
+    """Fix entries written by older builds: the value from before the rename
+    (JkBmsWidget) becomes ours, and an exe registered without --autostart
+    gets the flag."""
+    if not available():
+        return
+    if _read(LEGACY_VALUE_NAME) is not None:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            try:
+                winreg.DeleteValue(key, LEGACY_VALUE_NAME)
+            except FileNotFoundError:
+                pass
+        set_enabled(True)  # it was on before the rename: keep it on
+    elif is_enabled() and _read() != command():
         set_enabled(True)

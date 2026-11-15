@@ -4,7 +4,7 @@ Context and rules for working on this repository.
 
 ## Project
 
-Read-only Windows desktop widget for a JK BMS over BLE. Proof of concept for
+**OpenBMS Monitor** (formerly JK BMS Monitor): read-only Windows desktop widget for a JK BMS over BLE (more brands planned). Proof of concept for
 a home backup power system (~4 kWh battery; the PC itself runs from it).
 The protocol logic may later be ported to an Android app for end users, so
 keep it pure and well covered by test vectors.
@@ -191,6 +191,31 @@ History for the chart is in memory only (lost on restart), 10 s buckets.
     an offline member counts with its last voltage for `SERIES_GRACE_S`
     (60 s), then `Snapshot.missing` → stale + red "no data from a BMS of
     the bank". Status dots removed from dashboard title and widget (owner).
+  - Renamed to **OpenBMS Monitor** (owner 2026-11-15, v0.8.0; the app is
+    not JK-only any more). Visible names only: title, `OpenBmsMonitor.exe`,
+    `installer/OpenBmsMonitor.iss` (same AppId, `UsePreviousAppDir=no`,
+    `[InstallDelete]` removes the old `JkBmsWidget` program folder and
+    shortcuts, kills the old exe, deletes the old Run value), data folder
+    `%APPDATA%\OpenBmsMonitor` (`settings.migrate_legacy_dir` moves the old
+    `JkBmsWidget` folder on first start, never overwrites), Run value
+    `OpenBmsMonitor` (`autostart.upgrade_entry` takes over the old one),
+    `Documents\OpenBMS Monitor`, repo `linux2020l/OpenBMS-Monitor`
+    (`updates.REPO`). The Python package stays `jkbms_widget` (internal).
+  - Step E (owner 2026-11-15): `updates.py` (pure + one blocking
+    `fetch_latest`: GET the public "latest release" API, generic
+    User-Agent, no user data; `REPO` is the only place naming the GitHub
+    repo; drafts / pre-releases / non-GitHub URLs ignored).
+    `app.UpdateChecker` runs it on a daemon thread and signals back.
+    Auto check 60 s after start, then daily, only with a settings file and
+    not in replay (tests never hit the network). New version → one tray
+    balloon per version (`update_notified`), bold menu item "Download
+    version X…" opens the release page; settings → System: daily check
+    on/off + "Check now". Never downloads or installs anything.
+    CI: `.github/workflows/tests.yml` (pytest on windows-latest, push to
+    main + PRs) and `release.yml` (tag `vX.Y.Z` = `__version__`, choco
+    Inno Setup, `build.ps1` with `BUILD_PYTHON=python`, which throws on CI
+    without Inno Setup; softprops/action-gh-release uploads the installer).
+    Pushing workflow files needs a GitHub token with the `workflow` scope.
   - Widgets on the desktop (owner 2026-11-15, `widgets_on_desktop`):
     `CompactWindow.set_on_desktop` drops `WindowStaysOnTopHint`,
     `win_taskbar.pin_to_desktop` makes Progman the window's owner (never

@@ -296,7 +296,7 @@ def test_alarm_dialog_lists_alarms_in_ukrainian(app):
 def test_restart_command_keeps_options_but_drops_one_shot_flags():
     from jkbms_widget.app import restart_command
 
-    exe = r"C:\Apps\JkBmsWidget\JkBmsWidget.exe"
+    exe = r"C:\Apps\OpenBmsMonitor\OpenBmsMonitor.exe"
     assert restart_command(True, exe, [exe, "--autostart"], []) == (exe, [])
     assert restart_command(True, exe, [exe, "--exit-after", "8", "widget"], []) == (exe, ["widget"])
     py = r"C:\venv\python.exe"
@@ -723,3 +723,40 @@ def test_chart_uses_the_idle_threshold_from_settings(app):
     ctl.set_idle_threshold(0.8)
     assert ctl.dashboard.chart.idle_threshold == 0.8
     ctl.shutdown()
+
+
+def test_update_found_adds_menu_item_and_notifies_once(app):
+    from jkbms_widget import updates
+
+    ctl, src = make_controller()
+    notes = []
+    ctl._notify = notes.append
+    newer = updates.Release("99.0.0", "https://github.com/x/y/releases/tag/v99.0.0")
+    ctl._on_update_result(newer, False)
+    assert ctl.update == newer and ctl.settings.update_notified == "99.0.0"
+    ctl.populate_menu()
+    assert ctl.menu.actions()[0].text() == strings.MENU_UPDATE.format(version="99.0.0")
+    count = len(notes)
+    ctl._on_update_result(newer, False)  # daily check again: no second notification
+    assert len(notes) == count
+    ctl._on_update_result(updates.Release("0.0.1", updates.RELEASES_PAGE), True)
+    assert ctl.update is None and notes[-1] == strings.UPDATE_NONE.format(version="0.0.1")
+    ctl._on_update_result(None, True)
+    assert notes[-1] == strings.UPDATE_FAILED
+    ctl.shutdown()
+
+
+def test_update_checker_runs_in_background_and_reports_back(app):
+    from PySide6.QtTest import QTest
+
+    from jkbms_widget.app import UpdateChecker
+
+    got = []
+    checker = UpdateChecker(fetch=lambda: "release")
+    checker.finished.connect(lambda r, manual: got.append((r, manual)))
+    checker.check(manual=True)
+    for _ in range(50):
+        if got:
+            break
+        QTest.qWait(20)
+    assert got == [("release", True)] and not checker.busy

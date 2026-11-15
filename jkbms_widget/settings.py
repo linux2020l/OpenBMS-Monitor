@@ -1,4 +1,4 @@
-"""User settings and app data files (JSON in %APPDATA%\\JkBmsWidget).
+"""User settings and app data files (JSON in %APPDATA%\\OpenBmsMonitor).
 
 Pure Python, no Qt. A missing or corrupt file never stops the app: we
 fall back to defaults and overwrite it on the next save.
@@ -13,15 +13,37 @@ from pathlib import Path
 
 from .model import DEFAULT_IDLE_THRESHOLD
 
-APP_DIR_NAME = "JkBmsWidget"
+APP_DIR_NAME = "OpenBmsMonitor"
+LEGACY_APP_DIR_NAME = "JkBmsWidget"  # before the rename to OpenBMS Monitor (v0.8.0)
+DOCUMENTS_DIR_NAME = "OpenBMS Monitor"  # Documents\\..., CSV exports and diagnostics
 
 
 def app_dir() -> Path:
-    """%APPDATA%\\JkBmsWidget (created on demand)."""
-    base = os.environ.get("APPDATA") or str(Path.home())
-    path = Path(base) / APP_DIR_NAME
+    """%APPDATA%\\OpenBmsMonitor (created on demand; the old folder is moved there)."""
+    base = Path(os.environ.get("APPDATA") or str(Path.home()))
+    path = base / APP_DIR_NAME
+    migrate_legacy_dir(base / LEGACY_APP_DIR_NAME, path)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def migrate_legacy_dir(old: Path, new: Path) -> bool:
+    """First start after the rename: settings, history and log move to the
+    new folder, so nothing is lost. Never overwrites an existing new folder.
+    True if something was moved."""
+    if new.exists() or not old.is_dir():
+        return False
+    try:
+        old.rename(new)  # same drive: instant, keeps everything
+        return True
+    except OSError:
+        import shutil
+
+        try:  # e.g. a file still locked: copy what can be copied
+            shutil.copytree(old, new, ignore=shutil.ignore_patterns("*.lock"))
+            return True
+        except OSError:
+            return False
 
 
 @dataclass
@@ -75,6 +97,8 @@ class Settings:
     fullscreen_behavior: str = "hide"  # strip during full-screen apps: "hide" / "corner"
     dim_when_maximized: bool = True  # widget/strip see-through + click-through then
     widgets_on_desktop: bool = False  # floating widgets pinned to the desktop, not on top
+    check_updates: bool = True  # ask GitHub once a day for a newer release
+    update_notified: str = ""  # newest version already announced (one balloon per version)
     language: str = "auto"  # "auto" (Windows display language), "uk" or "en"
     notify_enabled: bool = True  # Windows notifications (low SOC, alarms, lost, full)
     low_soc_threshold: int = 20  # %, "low battery" notification
@@ -149,6 +173,9 @@ class Settings:
             self.low_soc_threshold = 20
         self.notify_enabled = bool(self.notify_enabled)
         self.widgets_on_desktop = bool(self.widgets_on_desktop)
+        self.check_updates = bool(self.check_updates)
+        if not isinstance(self.update_notified, str):
+            self.update_notified = ""
         if self.language not in ("auto", "uk", "en"):
             self.language = "auto"
         if self.fullscreen_behavior not in ("hide", "corner"):

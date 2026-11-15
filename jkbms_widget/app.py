@@ -16,16 +16,16 @@ import uuid
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PySide6.QtCore import QLockFile, QObject, QPoint, QProcess, QRect, QTimer, QUrl
+from PySide6.QtCore import QLockFile, QObject, QPoint, QProcess, QRect, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QFont, QGuiApplication
 from PySide6.QtWidgets import QApplication, QDialog, QMenu, QMessageBox, QSystemTrayIcon, QWidget
 
-from . import autostart, strings, win_taskbar
+from . import autostart, strings, updates, win_taskbar
 from . import drivers
 from .bank import SERIES, combine_cells, free_letter
 from .model import CellInfo, DeviceInfo
 from .notifications import ALARM, FULL, LOST, LOW_SOC, Notifier
-from .settings import BankConfig, Device, Settings, app_dir
+from .settings import DOCUMENTS_DIR_NAME, BankConfig, Device, Settings, app_dir
 from .sources import BleSource, DataSource, ReplaySource
 from .history_store import RETENTION_S, HistoryStore
 from .state import History, Snapshot, StateTracker, time_left
@@ -71,6 +71,31 @@ def restart_command(frozen: bool, executable: str, argv: list[str],
         else:
             out.append(a)
     return executable, out
+
+
+class UpdateChecker(QObject):
+    """Runs updates.fetch_latest in a background thread (it blocks on the
+    network) and hands the result to the GUI thread through a signal."""
+
+    finished = Signal(object, bool)  # Release | None, asked by the user
+
+    def __init__(self, fetch=updates.fetch_latest) -> None:
+        super().__init__()
+        self.fetch = fetch
+        self.busy = False
+
+    def check(self, manual: bool = False) -> None:
+        if self.busy:
+            return
+        self.busy = True
+        import threading
+
+        def run() -> None:
+            release = self.fetch()
+            self.busy = False
+            self.finished.emit(release, manual)  # queued to the GUI thread
+
+        threading.Thread(target=run, name="update-check", daemon=True).start()
 
 
 class View(QObject):
@@ -420,6 +445,20 @@ class Controller(QObject):
         self.history_timer.timeout.connect(self.prune_history)
         self.history_timer.start(HISTORY_PRUNE_MS)
 
+        # Update check (step E): once a minute after start, then daily. Only
+        # for the real app (settings file), never in replay mode or tests.
+        self.update: updates.Release | None = None  # newer release, if any
+        self._update_balloon = False  # the last tray balloon was the update one
+        self.updater = UpdateChecker()
+        self.updater.finished.connect(self._on_update_result)
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self._auto_update_check)
+        if self.settings_path is not None and not self.replay:
+            QTimer.singleShot(int(updates.FIRST_CHECK_DELAY_S * 1000), self._auto_update_check)
+            self.update_timer.start(int(updates.CHECK_EVERY_S * 1000))
+        if self.tray is not None:
+            self.tray.messageClicked.connect(self._on_balloon_clicked)
+
     # ----- monitors -------------------------------------------------------------
     def _wire(self, v: View) -> None:
         v.load_history()
@@ -750,6 +789,10 @@ class Controller(QObject):
                     enabled=len(self.monitors) > 1 and not self.replay)
             m.addSeparator()
 
+        if self.update is not None:  # newer release found: offer the download page
+            act = add(strings.MENU_UPDATE.format(version=self.update.version), self.open_update_page)
+            act.setFont(QFont(theme.FONT_FAMILY, 9, QFont.Bold))
+            m.addSeparator()
         add(strings.MENU_SETTINGS, self.open_settings)
         add(strings.MENU_HIDE_DASHBOARD if self.dashboard.isVisible() else strings.MENU_SHOW_DASHBOARD,
             self.toggle_dashboard)
@@ -966,6 +1009,8 @@ class Controller(QObject):
         dlg.fullscreen_changed.connect(self.set_fullscreen_behavior)
         dlg.dim_changed.connect(self.set_dim_when_maximized)
         dlg.desktop_changed.connect(self.set_widgets_on_desktop)
+        dlg.updates_changed.connect(self.set_check_updates)
+        dlg.update_check_requested.connect(lambda: self.updater.check(manual=True))
         dlg.autostart_changed.connect(self.set_autostart)
         dlg.open_folder.connect(self.open_data_folder)
         dlg.diagnostics_requested.connect(self.open_diagnostics)
@@ -1200,7 +1245,7 @@ class Controller(QObject):
             return
         docs = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation) or str(Path.home())
         name = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in (self.device_name or "bms"))
-        default = Path(docs) / "JK BMS Monitor" / f"history-{name}-{datetime.now():%Y%m%d-%H%M}.csv"
+        default = Path(docs) / DOCUMENTS_DIR_NAME / f"history-{name}-{datetime.now():%Y%m%d-%H%M}.csv"
         default.parent.mkdir(parents=True, exist_ok=True)
         path, _ = QFileDialog.getSaveFileName(None, strings.EXPORT_TITLE, str(default), "CSV (*.csv)")
         if not path:
@@ -1245,6 +1290,47 @@ class Controller(QObject):
         self.restart_pending = True
         self.quit()
 
+    # ----- updates (read-only: tell the user, open the release page) ---------------
+    def _auto_update_check(self) -> None:
+        if self.settings.check_updates:
+            self.updater.check()
+
+    def _on_update_result(self, release, manual: bool) -> None:
+        if release is None:
+            log.info("update check failed")
+            if manual:
+                self._notify(strings.UPDATE_FAILED)
+            return
+        if not updates.is_newer(release.version):
+            self.update = None
+            if manual:
+                self._notify(strings.UPDATE_NONE.format(version=release.version))
+            return
+        log.info("update available: %s", release.version)
+        self.update = release
+        if manual or self.settings.update_notified != release.version:
+            self.settings.update_notified = release.version  # one balloon per version
+            self.save_settings()
+            if self.tray is not None:
+                self._update_balloon = True
+                self.tray.showMessage(strings.APP_TITLE,
+                                      strings.UPDATE_AVAILABLE.format(version=release.version),
+                                      QSystemTrayIcon.Information, 15000)
+            else:
+                self._notify(strings.UPDATE_AVAILABLE.format(version=release.version))
+
+    def _on_balloon_clicked(self) -> None:
+        if self._update_balloon:
+            self.open_update_page()
+
+    def open_update_page(self) -> None:
+        url = self.update.url if self.update is not None else updates.RELEASES_PAGE
+        QDesktopServices.openUrl(QUrl(url))
+
+    def set_check_updates(self, enabled: bool) -> None:
+        self.settings.check_updates = enabled
+        self.save_settings()
+
     def toggle_autostart(self) -> None:
         self.set_autostart(not autostart.is_enabled())
 
@@ -1274,11 +1360,13 @@ class Controller(QObject):
             return
         log.info("notification %s %s: %s", snap.device_name, event.kind, text)
         if self.tray is not None:
+            self._update_balloon = False
             icon = QSystemTrayIcon.Information if event.kind == FULL else QSystemTrayIcon.Warning
             self.tray.showMessage(snap.device_name or strings.APP_TITLE, text, icon, 10000)
 
     def _notify(self, text: str) -> None:
         if self.tray is not None:
+            self._update_balloon = False
             self.tray.showMessage(strings.APP_TITLE, text)
         else:
             QMessageBox.information(None, strings.APP_TITLE, text)

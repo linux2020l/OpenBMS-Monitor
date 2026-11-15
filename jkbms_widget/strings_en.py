@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from .state import CHARGING, DISCHARGING, IDLE
 
-APP_TITLE = "Jikong BMS Monitor"
+APP_TITLE = "OpenBMS Monitor"
 
 STATE_NAMES = {CHARGING: "Charging", DISCHARGING: "Discharging", IDLE: "Idle"}
 
@@ -291,3 +291,12 @@ BANK_NO_DATA = "No data from a BMS of the bank"
 BANK_NO_DATA_SHORT = "No data"
 BANK_NO_DATA_SUB = "Offline for over a minute: {names}"
 CELLS_ALL = "All cells:"
+SECTION_UPDATES = "UPDATES"
+UPDATE_CHECK_LABEL = "Check for updates once a day"
+UPDATE_CHECK_NOW = "Check now"
+UPDATE_CHECK_NOTE = ("The app only reads the latest version number from GitHub. It never "
+                     "downloads or installs anything by itself: you install updates.")
+UPDATE_AVAILABLE = "Version {version} is available. Click to open the download page."
+UPDATE_NONE = "You have the latest version (newest on GitHub: {version})."
+UPDATE_FAILED = "Couldn't check for updates. Check your internet connection."
+MENU_UPDATE = "Download version {version}…"

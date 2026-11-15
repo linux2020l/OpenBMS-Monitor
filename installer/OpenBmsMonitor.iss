@@ -1,28 +1,34 @@
-﻿; Inno Setup script for JK BMS Monitor (JkBmsWidget).
+﻿; Inno Setup script for OpenBMS Monitor (formerly JK BMS Monitor / JkBmsWidget).
 ; Built by build.ps1, which passes /DAppVersion=x.y.z and expects the
-; PyInstaller one-folder build in dist\JkBmsWidget\.
+; PyInstaller one-folder build in dist\OpenBmsMonitor\.
 ;
 ; Per-user install, no administrator rights:
-;   program  -> %LOCALAPPDATA%\Programs\JkBmsWidget
-;   settings -> %APPDATA%\JkBmsWidget (written by the app, kept on uninstall
-;               so a reinstall keeps the chart history)
+;   program  -> %LOCALAPPDATA%\Programs\OpenBmsMonitor
+;   settings -> %APPDATA%\OpenBmsMonitor (written by the app, kept on uninstall
+;               so a reinstall keeps the chart history; the app moves the old
+;               %APPDATA%\JkBmsWidget folder there on its first start)
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
-#define AppName "JK BMS Monitor"
-#define AppExe "JkBmsWidget.exe"
+#define AppName "OpenBMS Monitor"
+#define AppExe "OpenBmsMonitor.exe"
+; Before the rename (v0.8.0): removed on update so no old copy stays behind.
+#define OldExe "JkBmsWidget.exe"
+#define OldName "JK BMS Monitor"
 
 [Setup]
-; Fixed AppId: lets a newer setup update an existing install in place.
+; Fixed AppId (kept through the rename): a newer setup replaces the old install.
 AppId={{6B0E4C1F-7A35-4E61-9C4B-2F1D8A93B7E2}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher=linux2020l
-AppPublisherURL=https://github.com/linux2020l/JkBMS-PC-Monitor
-AppSupportURL=https://github.com/linux2020l/JkBMS-PC-Monitor/issues
-DefaultDirName={autopf}\JkBmsWidget
+AppPublisherURL=https://github.com/linux2020l/OpenBMS-Monitor
+AppSupportURL=https://github.com/linux2020l/OpenBMS-Monitor/issues
+DefaultDirName={autopf}\OpenBmsMonitor
+; Old installs live in ...\JkBmsWidget: always use the new folder.
+UsePreviousAppDir=no
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -36,7 +42,7 @@ SetupIconFile=..\assets\icon.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 OutputDir=..\dist
-OutputBaseFilename=JkBmsWidget-Setup-{#AppVersion}
+OutputBaseFilename=OpenBmsMonitor-Setup-{#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -58,7 +64,13 @@ Name: "autostart"; Description: "{cm:AutostartTask}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "..\dist\JkBmsWidget\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\OpenBmsMonitor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[InstallDelete]
+; Leftovers of the version before the rename (program folder, shortcuts).
+Type: filesandordirs; Name: "{autopf}\JkBmsWidget"
+Type: files; Name: "{autoprograms}\{#OldName}.lnk"
+Type: files; Name: "{autodesktop}\{#OldName}.lnk"
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
@@ -66,9 +78,11 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 
 [Registry]
 ; Same value the app's own "Start with Windows" setting uses (autostart.py).
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "JkBmsWidget"; ValueData: """{app}\{#AppExe}"" --autostart"; Tasks: autostart; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "OpenBmsMonitor"; ValueData: """{app}\{#AppExe}"" --autostart"; Tasks: autostart; Flags: uninsdeletevalue
 ; Without the task: still remove the value on uninstall (the app may have set it).
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "JkBmsWidget"; Flags: uninsdeletevalue dontcreatekey
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "OpenBmsMonitor"; Flags: uninsdeletevalue dontcreatekey
+; The value used before the rename would start a program that no longer exists.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "JkBmsWidget"; Flags: deletevalue dontcreatekey
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchApp}"; Flags: nowait postinstall skipifsilent
@@ -84,6 +98,9 @@ var
   ResultCode: Integer;
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#AppExe}', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  // The version before the rename (its files are removed by [InstallDelete]).
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#OldExe}', '', SW_HIDE,
        ewWaitUntilTerminated, ResultCode);
   Result := '';
 end;

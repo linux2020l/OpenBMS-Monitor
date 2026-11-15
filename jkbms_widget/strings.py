@@ -18,7 +18,7 @@ from .state import CHARGING, DISCHARGING, IDLE
 
 LANGUAGES = ("uk", "en")
 
-APP_TITLE = "Jikong BMS Monitor"
+APP_TITLE = "OpenBMS Monitor"
 
 STATE_NAMES = {CHARGING: "Заряд", DISCHARGING: "Розряд", IDLE: "Очікування"}
 
@@ -357,6 +357,15 @@ BANK_NO_DATA = "Немає даних від BMS банку"
 BANK_NO_DATA_SHORT = "Немає даних"
 BANK_NO_DATA_SUB = "Без зв'язку понад хвилину: {names}"
 CELLS_ALL = "Усі комірки:"
+SECTION_UPDATES = "ОНОВЛЕННЯ"
+UPDATE_CHECK_LABEL = "Перевіряти оновлення раз на день"
+UPDATE_CHECK_NOW = "Перевірити зараз"
+UPDATE_CHECK_NOTE = ("Програма лише дізнається номер останньої версії на GitHub. Вона нічого "
+                     "не завантажує й не встановлює сама: оновлення ставите ви.")
+UPDATE_AVAILABLE = "Доступна нова версія {version}. Натисніть, щоб відкрити сторінку завантаження."
+UPDATE_NONE = "У вас найновіша версія (остання на GitHub: {version})."
+UPDATE_FAILED = "Не вдалося перевірити оновлення. Перевірте з'єднання з інтернетом."
+MENU_UPDATE = "Завантажити версію {version}…"
 
 def partial_note(snap) -> str:
     """Which members of a bank are not live (parallel: left out of the sums;

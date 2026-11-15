@@ -1,0 +1,42 @@
+# Release: push a tag like v0.8.0 (it must match jkbms_widget.__version__).
+# GitHub then runs the tests, builds the app and the installer with
+# build.ps1 and publishes a release with the installer attached.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write  # create the release and upload the installer
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      BUILD_PYTHON: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Tag must match the app version
+        shell: pwsh
+        run: |
+          $version = python -c "import jkbms_widget; print(jkbms_widget.__version__)"
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match the app version $version"
+          }
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Test and build (app + installer)
+        shell: pwsh
+        run: ./build.ps1
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*-Setup-*.exe
+          fail_on_unmatched_files: true
+          generate_release_notes: true
