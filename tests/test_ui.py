@@ -760,3 +760,31 @@ def test_update_checker_runs_in_background_and_reports_back(app):
             break
         QTest.qWait(20)
     assert got == [("release", True)] and not checker.busy
+
+
+def test_chart_drag_selects_a_range_and_click_clears_it(app):
+    import time
+
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+
+    from jkbms_widget.state import HistoryPoint
+    from jkbms_widget.ui.chart import HistoryChart
+
+    now = time.time()
+    pts = [HistoryPoint(now - 3600 + t, 60, -30.0, 13.0) for t in range(0, 3600, 10)]
+    c = HistoryChart()
+    c.resize(800, 300)
+    c.set_data(pts, 3600, "")
+    QTest.mousePress(c, Qt.LeftButton, Qt.NoModifier, QPoint(200, 100))
+    QTest.mouseMove(c, QPoint(500, 120))
+    QTest.mouseRelease(c, Qt.LeftButton, Qt.NoModifier, QPoint(500, 120))
+    assert c.selection is not None
+    info = c.selection_summary()
+    hours = (info["t1"] - info["t0"]) / 3600
+    assert info["discharged"] == pytest.approx(13.0 * 30 * hours / 1000, rel=0.02)
+    assert info["charged"] == 0.0
+    c.grab()  # paints the band and the box without errors
+    QTest.mouseClick(c, Qt.LeftButton, Qt.NoModifier, QPoint(300, 100))
+    assert c.selection is None
+    c.grab()  # back to the hover tooltip

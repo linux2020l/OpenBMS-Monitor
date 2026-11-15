@@ -71,3 +71,17 @@ def test_every_alarm_code_has_a_text_in_every_language():
 )
 def test_auto_language_follows_windows(setting, system, expected):
     assert strings.resolve_language(setting, system) == expected
+
+
+def test_energy_and_duration_formatters():
+    assert strings.fmt_energy(0.35) == "350 Wh"
+    assert strings.fmt_energy(-0.0424) == "-42 Wh"
+    assert strings.fmt_energy(1.254) == "1.25 kWh"
+    assert strings.fmt_duration(45 * 60) == "45 хв"
+    assert strings.fmt_duration(2 * 3600 + 5 * 60) == "2 год 05 хв"
+    assert strings.fmt_duration(3 * 86400 + 4 * 3600) == "3 дн 4 год"
+    strings.set_language("en")
+    try:
+        assert strings.fmt_duration(2 * 3600 + 5 * 60) == "2 h 05 min"
+    finally:
+        strings.set_language("uk")

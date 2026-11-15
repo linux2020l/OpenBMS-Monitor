@@ -10,6 +10,10 @@ background so they read as separate charts:
 Time ticks fall on round clock times (every 5/10 min ... 1 day).
 Hovering shows a crosshair and a tooltip with time, SOC, current,
 voltage and power of the nearest 10-second bucket.
+Dragging with the left mouse button picks a time range (owner's request
+2026-11-15): it is shaded across both panels and a box shows the energy
+that went in / out of the battery in it (`state.energy_between`), the net
+and the SOC change. A click without dragging clears it.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, 
 from PySide6.QtWidgets import QWidget
 
 from .. import strings
-from ..state import HistoryPoint
+from ..state import HistoryPoint, energy_between
 from . import theme
 
 CHARGE_COLOR = theme.GREEN  # current panel
@@ -39,6 +43,9 @@ PANEL_PAD = 6.0  # px the panel background extends around the plot area
 # same as the Idle state): a bank's summed current is rarely exactly 0, so a
 # tiny fixed value coloured idle banks as charging / discharging (owner's report).
 ZERO_CURRENT = 0.05
+
+SELECT_COLOR = theme.BLUE
+DRAG_MIN_PX = 4  # shorter drags count as a click (clears the selection)
 
 CURRENT_AXIS_STEP = 10.0  # A; owner's request: currents can exceed 100 A
 TIME_STEPS = (60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400)
@@ -116,6 +123,24 @@ def _soc_color(current: float, idle: float = ZERO_CURRENT) -> str:
     return SOC_IDLE_COLOR
 
 
+def range_summary(points: list[HistoryPoint], t0: float, t1: float,
+                  bucket_s: float = 10.0) -> dict | None:
+    """Energy and SOC change between t0 and t1 (selection box contents).
+
+    `points` must be sorted by time. None if no bucket overlaps the range.
+    """
+    if t1 < t0:
+        t0, t1 = t1, t0
+    times = [p.time for p in points]
+    inside = points[bisect.bisect_left(times, t0 - bucket_s):bisect.bisect_left(times, t1)]
+    inside = [p for p in inside if p.time + bucket_s > t0]
+    if not inside:
+        return None
+    charged, discharged = energy_between(inside, t0, t1, bucket_s)
+    return {"t0": t0, "t1": t1, "charged": charged, "discharged": discharged,
+            "net": charged - discharged, "soc0": inside[0].soc, "soc1": inside[-1].soc}
+
+
 # ----- widget -------------------------------------------------------------------
 class HistoryChart(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -127,11 +152,20 @@ class HistoryChart(QWidget):
         self.empty_text = ""
         self._now = time.time()
         self._hover_x: float | None = None
+        self.bucket_s = 10.0  # history bucket length, for the energy of a range
+        # Selected range as unix times (stays put while new data scrolls in).
+        self.selection: tuple[float, float] | None = None
+        self._drag_x: float | None = None  # press position while dragging
+        self._summary_key = None
+        self._summary: dict | None = None
         self.setMouseTracking(True)
+        self.setCursor(Qt.CrossCursor)
         self.setMinimumHeight(190)
 
-    def set_data(self, points: list[HistoryPoint], span_s: float, empty_text: str) -> None:
+    def set_data(self, points: list[HistoryPoint], span_s: float, empty_text: str,
+                 bucket_s: float = 10.0) -> None:
         self.points, self.span_s, self.empty_text = points, span_s, empty_text
+        self.bucket_s = bucket_s
         self._times = [p.time for p in points]
         self._now = time.time()
         self.update()
@@ -149,6 +183,30 @@ class HistoryChart(QWidget):
     def _x_of(self, t: float, plot: QRectF) -> float:
         t0 = self._now - self.span_s
         return plot.left() + (t - t0) / self.span_s * plot.width()
+
+    def _t_of(self, x: float, plot: QRectF) -> float:
+        """Inverse of `_x_of`, clamped to the plot."""
+        x = min(max(x, plot.left()), plot.right())
+        return self._now - self.span_s + (x - plot.left()) / plot.width() * self.span_s
+
+    def clear_selection(self) -> None:
+        self.selection = None
+        self._drag_x = None
+        self.update()
+
+    def selection_summary(self) -> dict | None:
+        """`range_summary` of the selection, clipped to the shown span (cached)."""
+        if self.selection is None:
+            return None
+        t0 = max(min(self.selection), self._now - self.span_s)
+        t1 = min(max(self.selection), self._now)
+        if t1 <= t0:
+            return None
+        key = (t0, t1, id(self.points), len(self.points), self.bucket_s)
+        if key != self._summary_key:
+            self._summary_key = key
+            self._summary = range_summary(self.points, t0, t1, self.bucket_s)
+        return self._summary
 
     def _max_gap(self, plot: QRectF) -> float:
         # A gap much longer than the point spacing (app off, BMS out of range)
@@ -242,7 +300,66 @@ class HistoryChart(QWidget):
                             lambda i: _direction_color(i, idle), 2.0)
         p.restore()
 
-        self._paint_hover(p, fm, soc_rect, cur_rect, soc_y, cur_y)
+        if self.selection is not None:
+            self._paint_selection(p, fm, soc_rect, cur_rect)
+        else:
+            self._paint_hover(p, fm, soc_rect, cur_rect, soc_y, cur_y)
+
+    def _paint_selection(self, p, fm, soc_rect, cur_rect) -> None:
+        t0, t1 = sorted(self.selection)
+        x0 = max(self._x_of(t0, soc_rect), soc_rect.left())
+        x1 = min(self._x_of(t1, soc_rect), soc_rect.right())
+        if x1 <= x0:
+            return  # scrolled out of the shown span
+        # Shaded band across both panels, solid edges.
+        band = QColor(SELECT_COLOR)
+        band.setAlpha(45)
+        top, bottom = soc_rect.top(), cur_rect.bottom()
+        p.setPen(Qt.NoPen)
+        p.setBrush(band)
+        p.drawRect(QRectF(x0, top, x1 - x0, bottom - top))
+        p.setPen(QPen(QColor(SELECT_COLOR), 1))
+        for x in (x0, x1):
+            p.drawLine(QPointF(x, top), QPointF(x, bottom))
+
+        info = self.selection_summary()
+        if info is None:
+            return
+        # One pixel is ~4 s on the 1 h range, ~26 s on 6 h: seconds only on 1 h.
+        fmt = ("%d.%m %H:%M" if self.span_s > 86400 else
+               "%H:%M:%S" if self.span_s <= 3600 else "%H:%M")
+        start = datetime.fromtimestamp(info["t0"]).strftime(fmt)
+        end = datetime.fromtimestamp(info["t1"]).strftime(fmt)
+        net = info["net"]
+        sign = "+" if net > 0 else ""
+        rows = [
+            (f"{start} – {end}  ·  {strings.fmt_duration(info['t1'] - info['t0'])}", theme.MUTED),
+            (f"{strings.SEL_CHARGED}   {strings.fmt_energy(info['charged'])}", CHARGE_COLOR),
+            (f"{strings.SEL_DISCHARGED}   {strings.fmt_energy(info['discharged'])}",
+             DISCHARGE_COLOR),
+            (f"{strings.SEL_NET}   {sign}{strings.fmt_energy(net)}", theme.TEXT),
+            (f"SOC   {info['soc0']:.0f} → {info['soc1']:.0f} %", SOC_IDLE_COLOR),
+        ]
+        if self._drag_x is None:
+            rows.append((strings.SEL_CLEAR, theme.MUTED))
+        self._paint_box(p, fm, rows, (x0 + x1) / 2, soc_rect, centered=True)
+
+    def _paint_box(self, p, fm, rows, x, plot, centered=False) -> None:
+        """Rounded tooltip box at the top of `plot`, next to / centred on x."""
+        pad, line_h = 8.0, fm.height() + 2
+        w = max(fm.horizontalAdvance(text) for text, _ in rows) + 2 * pad
+        h = line_h * len(rows) + 2 * pad - 2
+        if centered:
+            bx = min(max(x - w / 2, plot.left()), plot.right() - w)
+        else:
+            bx = x + 12 if x + 12 + w <= plot.right() else x - 12 - w
+        by = plot.top() + 4
+        p.setPen(QPen(QColor(theme.CARD_BORDER), 1))
+        p.setBrush(QColor(16, 19, 26, 240))
+        p.drawRoundedRect(QRectF(bx, by, w, h), 6, 6)
+        for n, (text, c) in enumerate(rows):
+            p.setPen(QColor(c))
+            p.drawText(QPointF(bx + pad, by + pad + fm.ascent() + n * line_h), text)
 
     def _draw_segments(self, p, pts, max_gap, rect, y_of, color_of, width) -> None:
         paths: dict[str, QPainterPath] = {}
@@ -299,22 +416,36 @@ class HistoryChart(QWidget):
              (f"{pt.voltage:.2f} V" if pt.voltage is not None else strings.NO_VALUE), theme.TEXT),
             (f"{strings.TIP_POWER}   " +
              (f"{abs(power):.0f} W" if power is not None else strings.NO_VALUE), theme.TEXT),
+            (strings.SEL_HINT, theme.MUTED),
         ]
-        pad, line_h = 8.0, fm.height() + 2
-        w = max(fm.horizontalAdvance(text) for text, _ in rows) + 2 * pad
-        h = line_h * len(rows) + 2 * pad - 2
-        bx = px + 12 if px + 12 + w <= soc_rect.right() else px - 12 - w
-        by = soc_rect.top() + 4
-        p.setPen(QPen(QColor(theme.CARD_BORDER), 1))
-        p.setBrush(QColor(16, 19, 26, 240))
-        p.drawRoundedRect(QRectF(bx, by, w, h), 6, 6)
-        for n, (text, c) in enumerate(rows):
-            p.setPen(QColor(c))
-            p.drawText(QPointF(bx + pad, by + pad + fm.ascent() + n * line_h), text)
+        self._paint_box(p, fm, rows, px, soc_rect)
 
     # ----- mouse ------------------------------------------------------------
+    def mousePressEvent(self, event) -> None:
+        if event.button() != Qt.LeftButton:
+            return super().mousePressEvent(event)
+        self._drag_x = event.position().x()
+        self.selection = None
+        self.update()
+
     def mouseMoveEvent(self, event) -> None:
-        self._hover_x = event.position().x()
+        x = event.position().x()
+        self._hover_x = x
+        if self._drag_x is not None and abs(x - self._drag_x) >= DRAG_MIN_PX:
+            plot = self._panels()[0]
+            self.selection = (self._t_of(self._drag_x, plot), self._t_of(x, plot))
+        self.update()
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() != Qt.LeftButton or self._drag_x is None:
+            return super().mouseReleaseEvent(event)
+        x = event.position().x()
+        if abs(x - self._drag_x) < DRAG_MIN_PX:
+            self.selection = None  # a plain click clears
+        else:
+            plot = self._panels()[0]
+            self.selection = (self._t_of(self._drag_x, plot), self._t_of(x, plot))
+        self._drag_x = None
         self.update()
 
     def leaveEvent(self, _event) -> None:

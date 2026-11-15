@@ -142,6 +142,10 @@ History for the chart is in memory only (lost on restart), 10 s buckets.
     with the chart); `ui/cells.py` (cells **tab** next to the chart in the
     dashboard); `state.history_csv` + menu "Export history (CSV)…"
     (comma, dot decimals, local ISO time).
+    Chart range selection (owner 2026-11-15): left-drag on the chart
+    shades a range and shows energy in / out, net and SOC change
+    (`state.energy_between`, partial buckets by overlap;
+    `chart.range_summary`); a click clears it, switching BMS clears it.
   - Step D1, several BMS at once (owner 2026-11-15; D2 = parallel banks
     below): `app.Monitor` = one BMS (source, tracker, notifier,
     history, its own `CompactWindow` + `TaskbarStrip`); `Controller.monitors`

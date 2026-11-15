@@ -65,6 +65,8 @@ settings).*
   per BMS and per bank in SQLite, survives restarts. Hover to see time, SOC,
   current, voltage and power. Colours show charge (green), discharge (amber)
   and idle (grey, below the idle threshold from the settings).
+  Drag across the chart to see the energy that went into and out of the
+  battery in that range (plus net and SOC change); click to clear.
 - **Cells tab**: every cell voltage as a bar (lowest blue, highest amber),
   spread in mV, average, balancing, temperatures.
 - **Energy counters**: kWh charged / discharged today and over 7 days.
@@ -224,8 +226,8 @@ release, set the new version in `jkbms_widget/__init__.py`, commit, then
 push a matching tag:
 
 ```powershell
-git tag v0.8.0
-git push origin v0.8.0
+git tag v0.9.0
+git push origin v0.9.0
 ```
 
 [.github/workflows/release.yml](.github/workflows/release.yml) then runs

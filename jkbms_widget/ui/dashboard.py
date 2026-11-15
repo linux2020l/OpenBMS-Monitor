@@ -341,6 +341,7 @@ class DashboardWindow(QWidget):
     def set_history(self, history: History) -> None:
         """Another BMS is shown: chart and energy come from its history."""
         self.history = history
+        self.chart.clear_selection()  # the range belonged to the other BMS
         self.refresh_chart(force=True)
 
     def _set_span(self, span_s: float) -> None:
@@ -354,7 +355,8 @@ class DashboardWindow(QWidget):
             return
         self._chart_at = now
         wall = time.time()
-        self.chart.set_data(self.history.series(self.span_s, wall), self.span_s, strings.CHART_EMPTY)
+        self.chart.set_data(self.history.series(self.span_s, wall), self.span_s,
+                            strings.CHART_EMPTY, self.history.bucket_s)
         week = self.history.series(7 * 24 * 3600, wall)
         for key, since in ((strings.ROW_ENERGY_TODAY, local_midnight(wall)),
                            (strings.ROW_ENERGY_WEEK, wall - 7 * 24 * 3600)):

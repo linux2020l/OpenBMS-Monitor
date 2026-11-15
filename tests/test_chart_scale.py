@@ -59,3 +59,16 @@ def test_time_ticks_fall_on_round_local_times():
     assert labels == ["21:30", "21:40", "21:50", "22:00", "22:10", "22:20"]
     days = time_ticks(t0, t0 + 3 * 86400, 86400)
     assert all(datetime.fromtimestamp(t).strftime("%H:%M") == "00:00" for t in days)
+
+
+def test_range_summary_gives_energy_net_and_soc_change():
+    from jkbms_widget.state import HistoryPoint
+
+    pts = [HistoryPoint(t, 50 + t / 360, 20.0, 13.0) for t in range(0, 3600, 10)]
+    info = chart.range_summary(pts, 1800, 0)
+    assert info["t0"] == 0 and info["t1"] == 1800
+    assert info["charged"] == pytest.approx(13.0 * 20 * 0.5 / 1000)
+    assert info["discharged"] == 0.0 and info["net"] == pytest.approx(info["charged"])
+    assert info["soc0"] == 50 and info["soc1"] == pytest.approx(50 + 1790 / 360)
+    assert chart.range_summary(pts, 5000, 6000) is None
+    assert chart.range_summary([], 0, 10) is None

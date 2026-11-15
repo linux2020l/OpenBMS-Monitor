@@ -6,6 +6,7 @@ Pure Python, no Qt imports (unit-tested, portable).
 from __future__ import annotations
 
 import json
+import math
 from collections import deque
 from dataclasses import dataclass
 
@@ -155,14 +156,29 @@ def energy_kwh(points: list[HistoryPoint], since: float,
     Gaps (app not running) simply add nothing. Old points stored without
     voltage use the nearest known voltage (pack voltage changes slowly).
     """
+    return energy_between(points, since, math.inf, bucket_s)
+
+
+def energy_between(points: list[HistoryPoint], t0: float, t1: float,
+                   bucket_s: float = 10.0) -> tuple[float, float]:
+    """(charged, discharged) kWh between unix times t0 and t1.
+
+    Bucket i covers [time, time + bucket_s); a bucket cut by the range
+    counts with the overlapping fraction, so a short range picked with the
+    mouse on the chart is not rounded to whole 10 s buckets. Same voltage
+    rule as `energy_kwh`.
+    """
+    if t1 < t0:
+        t0, t1 = t1, t0
     charged = discharged = 0.0  # Wh
     last_v = next((p.voltage for p in points if p.voltage is not None), None)
     for p in points:
         if p.voltage is not None:
             last_v = p.voltage
-        if p.time < since or last_v is None:
+        overlap = min(p.time + bucket_s, t1) - max(p.time, t0)
+        if overlap <= 0 or last_v is None:
             continue
-        wh = last_v * p.current * bucket_s / 3600
+        wh = last_v * p.current * overlap / 3600
         if wh > 0:
             charged += wh
         else:

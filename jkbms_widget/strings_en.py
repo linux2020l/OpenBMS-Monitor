@@ -170,6 +170,13 @@ TIP_POWER = "Power"
 TIP_CHARGE = "charging"
 TIP_DISCHARGE = "discharging"
 
+# Chart: energy of a range picked with the mouse
+SEL_HINT = "Drag with the mouse to measure energy"
+SEL_CHARGED = "In"
+SEL_DISCHARGED = "Out"
+SEL_NET = "Net"
+SEL_CLEAR = "Click to clear"
+
 # Diagnostics (community captures for new BMS brands)
 MENU_DIAGNOSTICS = "Record diagnostics…"
 DIAG_TITLE = "Diagnostic recording"

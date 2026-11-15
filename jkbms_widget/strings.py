@@ -101,6 +101,25 @@ def fmt_hours(hours: float | None) -> str:
     return f"≈ {hours / 24:.0f} {UNIT_DAY}"
 
 
+
+def fmt_energy(kwh: float) -> str:
+    """'350 Wh' below 1 kWh, else '1.25 kWh' (sign kept)."""
+    if abs(kwh) < 1:
+        return f"{kwh * 1000:.0f} Wh"
+    return f"{kwh:.2f} kWh"
+
+
+def fmt_duration(seconds: float) -> str:
+    """Exact length of a time range: '45 хв', '2 год 05 хв', '3 дн 4 год'."""
+    minutes = int(round(seconds / 60))
+    if minutes < 60:
+        return f"{minutes} {UNIT_MIN}"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours} {UNIT_HOUR} {minutes:02d} {UNIT_MIN}"
+    days, hours = divmod(hours, 24)
+    return f"{days} {UNIT_DAY} {hours} {UNIT_HOUR}"
+
 TIME_LEFT_KIND = {"empty": "до розряду", "full": "до повного заряду", None: "струм ≈ 0"}
 TIME_KINDS = ("empty", "full")
 
@@ -234,6 +253,13 @@ TIP_VOLTAGE = "Напруга"
 TIP_POWER = "Потужність"
 TIP_CHARGE = "заряд"
 TIP_DISCHARGE = "розряд"
+
+# Chart: energy of a range picked with the mouse
+SEL_HINT = "Потягніть мишею — енергія за проміжок"
+SEL_CHARGED = "Зайшло"
+SEL_DISCHARGED = "Вийшло"
+SEL_NET = "Різниця"
+SEL_CLEAR = "Клік — скинути"
 
 
 # Diagnostics (community captures for new BMS brands)

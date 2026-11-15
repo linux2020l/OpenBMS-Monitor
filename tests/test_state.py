@@ -156,3 +156,17 @@ def test_cell_bars_stay_steady_on_millivolt_noise():
     assert max(abs(x - y) for x, y in zip(a, b)) < 0.02  # bars barely move
     big = bar_shares((3.20, 3.30, 3.40))  # real 200 mV imbalance still spans the scale
     assert big[0] < MIN_BAR + 0.1 and big[2] > MAX_BAR - 0.1
+
+
+def test_energy_between_counts_partial_buckets():
+    from jkbms_widget.state import HistoryPoint, energy_between
+
+    pts = [HistoryPoint(t, 50, 36.0, 10.0) for t in range(0, 3600, 10)]  # 360 W, 1 h
+    assert energy_between(pts, 0, 3600) == pytest.approx((0.36, 0.0))
+    # Half an hour, starting and ending mid-bucket: still exactly half.
+    assert energy_between(pts, 905, 2705)[0] == pytest.approx(0.18)
+    assert energy_between(pts, 2705, 905)[0] == pytest.approx(0.18)  # either drag direction
+    assert energy_between(pts, 3600, 7200) == (0.0, 0.0)  # after the data
+    mixed = pts[:180] + [HistoryPoint(1800 + t, 50, -18.0, 10.0) for t in range(0, 1800, 10)]
+    charged, discharged = energy_between(mixed, 0, 3600)
+    assert charged == pytest.approx(0.18) and discharged == pytest.approx(0.09)
